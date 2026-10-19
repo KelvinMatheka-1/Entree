@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../data/mock_data.dart';
+import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 import 'event_details_screen.dart';
 import 'create_event_screen.dart';
@@ -100,6 +101,23 @@ class _HomeScreenState extends State<HomeScreen> {
     return Icons.terminal_rounded;
   }
 
+  List<EventModel> _backendEvents = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEvents();
+  }
+
+  Future<void> _loadEvents() async {
+    final events = await ApiService.instance.getEvents();
+    if (mounted) {
+      setState(() {
+        _backendEvents = events;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -108,7 +126,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // All events sorted by date ascending
   List<EventModel> get _allSortedEvents {
-    final list = List<EventModel>.from(MockData.events);
+    final list = _backendEvents.isNotEmpty
+        ? List<EventModel>.from(_backendEvents)
+        : List<EventModel>.from(MockData.events);
     list.sort((a, b) => a.date.compareTo(b.date));
     return list;
   }
@@ -653,7 +673,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.push(
           context,
           smoothPageRoute(EventDetailsScreen(event: event)),
-        );
+        ).then((_) => _loadEvents());
       },
       child: Container(
         width: double.infinity,
@@ -936,7 +956,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.push(
           context,
           smoothPageRoute(EventDetailsScreen(event: event)),
-        );
+        ).then((_) => _loadEvents());
       },
       behavior: HitTestBehavior.opaque,
       child: Container(
@@ -1124,7 +1144,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Navigator.push(
             context,
             smoothPageRoute(EventDetailsScreen(event: event)),
-          );
+          ).then((_) => _loadEvents());
         },
         behavior: HitTestBehavior.opaque,
         child: Container(
@@ -1324,7 +1344,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.push(
                       context,
                       smoothPageRoute(ScanEntryScreen(event: event)),
-                    );
+                    ).then((_) => _loadEvents());
                   },
                   behavior: HitTestBehavior.opaque,
                   child: Container(
@@ -1680,7 +1700,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Expanded(
                 child: _buildMetricTile(
-                  '${MockData.events.length}',
+                  '${_allSortedEvents.length}',
                   'Total Events',
                   Icons.event_note,
                 ),
@@ -2320,7 +2340,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   event: dayEvents.first,
                                 ),
                               ),
-                            );
+                            ).then((_) => _loadEvents());
                           }
                         },
                         child: Container(
@@ -2488,7 +2508,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Navigator.push(
             context,
             smoothPageRoute(EventDetailsScreen(event: event)),
-          );
+          ).then((_) => _loadEvents());
         },
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -2672,7 +2692,7 @@ class _HomeScreenState extends State<HomeScreen> {
           context,
           smoothPageRoute(const CreateEventScreen()),
         );
-        setState(() {});
+        _loadEvents();
       },
       child: Container(
         width: 46,

@@ -4,10 +4,11 @@ import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
 import '../data/mock_data.dart';
+import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 import 'guest_invitation_screen.dart';
 
-class SendInvitationScreen extends StatelessWidget {
+class SendInvitationScreen extends StatefulWidget {
   final EventModel event;
   final GuestModel? guest;
 
@@ -18,8 +19,48 @@ class SendInvitationScreen extends StatelessWidget {
   });
 
   @override
+  State<SendInvitationScreen> createState() => _SendInvitationScreenState();
+}
+
+class _SendInvitationScreenState extends State<SendInvitationScreen> {
+  GuestModel? _selectedGuest;
+  List<GuestModel> _guests = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedGuest = widget.guest;
+    _loadGuests();
+  }
+
+  Future<void> _loadGuests() async {
+    try {
+      final list = await ApiService.instance.getGuests(widget.event.id);
+      if (mounted) {
+        setState(() {
+          _guests = list;
+          if (_selectedGuest == null) {
+            _selectedGuest = list.isNotEmpty ? list.first : MockData.guests.first;
+          } else {
+            // Match with latest guest object if available
+            final found = list.where((g) => g.id == _selectedGuest!.id || g.passId == _selectedGuest!.passId);
+            if (found.isNotEmpty) _selectedGuest = found.first;
+          }
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _selectedGuest ??= MockData.guests.first;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final selectedGuest = guest ?? MockData.guests.first;
+    final event = widget.event;
+    final selectedGuest = _selectedGuest ?? widget.guest ?? MockData.guests.first;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -56,6 +97,40 @@ class SendInvitationScreen extends StatelessWidget {
             EventHeaderCompact(event: event),
             const SizedBox(height: 24),
 
+            if (_guests.length > 1) ...[
+              const SectionLabel(text: 'SELECT GUEST PASS'),
+              Container(
+                height: 38,
+                margin: const EdgeInsets.only(bottom: 20),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _guests.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, idx) {
+                    final g = _guests[idx];
+                    final isSel = selectedGuest.id == g.id || selectedGuest.passId == g.passId;
+                    return ChoiceChip(
+                      label: Text(g.fullName),
+                      selected: isSel,
+                      onSelected: (_) {
+                        setState(() {
+                          _selectedGuest = g;
+                        });
+                      },
+                      selectedColor: isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSel ? FontWeight.w600 : FontWeight.w500,
+                        color: isSel
+                            ? (isDark ? Colors.black : Colors.white)
+                            : (isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+
             // Heading
             Text(
               'A seat with their name on it.',
@@ -63,7 +138,7 @@ class SendInvitationScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              "Share ${selectedGuest.fullName}'s personal pass. Her QR invitation includes the event and assigned table.",
+              "Share ${selectedGuest.fullName}'s personal pass. The QR invitation includes the event and assigned table.",
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 28),

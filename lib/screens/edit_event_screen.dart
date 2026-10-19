@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
+import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 
 class EditEventScreen extends StatefulWidget {
@@ -86,6 +87,38 @@ class _EditEventScreenState extends State<EditEventScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            tooltip: 'Delete Event',
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Delete Event'),
+                  content: Text('Are you sure you want to delete "${widget.event.name}"? This action cannot be undone.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true && context.mounted) {
+                await ApiService.instance.deleteEvent(widget.event.id);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Event "${widget.event.name}" deleted')),
+                  );
+                  Navigator.pop(context, 'deleted');
+                }
+              }
+            },
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text(
@@ -564,7 +597,44 @@ class _EditEventScreenState extends State<EditEventScreen> {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () async {
+                        final name = _nameController.text.trim();
+                        if (name.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter an event name')),
+                          );
+                          return;
+                        }
+                        final tables = int.tryParse(_tablesController.text) ?? widget.event.tables;
+                        final seats = int.tryParse(_seatsController.text) ?? widget.event.seatsPerTable;
+                        final updated = widget.event.copyWith(
+                          name: name,
+                          venue: _venueController.text.trim().isNotEmpty
+                              ? _venueController.text.trim()
+                              : widget.event.venue,
+                          description: _descriptionController.text.trim(),
+                          startTime: _startTimeController.text.trim().isNotEmpty
+                              ? _startTimeController.text.trim()
+                              : widget.event.startTime,
+                          endTime: _endTimeController.text.trim().isNotEmpty
+                              ? _endTimeController.text.trim()
+                              : widget.event.endTime,
+                          tables: tables,
+                          seatsPerTable: seats,
+                          totalCapacity: tables * seats,
+                        );
+
+                        final saved = await ApiService.instance.updateEvent(updated);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Updated "${saved.name}" successfully'),
+                              backgroundColor: AppTheme.accentLime,
+                            ),
+                          );
+                          Navigator.pop(context, saved);
+                        }
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isDark
                             ? AppTheme.accentLime

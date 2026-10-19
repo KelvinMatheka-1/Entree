@@ -25,6 +25,64 @@ class GuestModel {
     this.guestCount = 1,
   });
 
+  factory GuestModel.fromJson(Map<String, dynamic> json) {
+    return GuestModel(
+      id: json['id']?.toString() ?? '',
+      passId: json['passId']?.toString() ?? '',
+      fullName: json['fullName']?.toString() ?? '',
+      email: json['email']?.toString() ?? '',
+      tableNumber: json['tableNumber']?.toString() ?? '01',
+      tableName: json['tableName']?.toString() ?? 'General',
+      status: json['status']?.toString() == 'checkedIn'
+          ? GuestCheckInStatus.checkedIn
+          : GuestCheckInStatus.notArrived,
+      checkInTime: json['checkInTime']?.toString(),
+      admission: json['admission']?.toString() ?? 'Standard pass',
+      guestCount: (json['guestCount'] as num?)?.toInt() ?? 1,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'passId': passId,
+      'fullName': fullName,
+      'email': email,
+      'tableNumber': tableNumber,
+      'tableName': tableName,
+      'status': status == GuestCheckInStatus.checkedIn ? 'checkedIn' : 'notArrived',
+      'checkInTime': checkInTime,
+      'admission': admission,
+      'guestCount': guestCount,
+    };
+  }
+
+  GuestModel copyWith({
+    String? id,
+    String? passId,
+    String? fullName,
+    String? email,
+    String? tableNumber,
+    String? tableName,
+    GuestCheckInStatus? status,
+    String? checkInTime,
+    String? admission,
+    int? guestCount,
+  }) {
+    return GuestModel(
+      id: id ?? this.id,
+      passId: passId ?? this.passId,
+      fullName: fullName ?? this.fullName,
+      email: email ?? this.email,
+      tableNumber: tableNumber ?? this.tableNumber,
+      tableName: tableName ?? this.tableName,
+      status: status ?? this.status,
+      checkInTime: checkInTime ?? this.checkInTime,
+      admission: admission ?? this.admission,
+      guestCount: guestCount ?? this.guestCount,
+    );
+  }
+
   String get initials {
     final parts = fullName.split(' ');
     if (parts.length >= 2) {

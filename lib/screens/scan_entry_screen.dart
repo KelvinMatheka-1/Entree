@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
 import '../data/mock_data.dart';
+import '../services/api_service.dart';
 import 'guest_invitation_screen.dart';
 import 'registered_guests_screen.dart';
 
@@ -17,23 +19,47 @@ class ScanEntryScreen extends StatefulWidget {
 }
 
 class _ScanEntryScreenState extends State<ScanEntryScreen> {
-  late final MobileScannerController _scannerController;
+  MobileScannerController? _scannerController;
+  late EventModel _currentEvent;
   bool _flashOn = false;
   bool _isProcessingScan = false;
+
+  bool get _supportsMobileScanner =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
 
   @override
   void initState() {
     super.initState();
-    _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
-      facing: CameraFacing.back,
-      torchEnabled: false,
-    );
+    _currentEvent = widget.event;
+    _refreshEvent();
+    if (_supportsMobileScanner) {
+      _scannerController = MobileScannerController(
+        detectionSpeed: DetectionSpeed.noDuplicates,
+        facing: CameraFacing.back,
+        torchEnabled: false,
+      );
+    }
+  }
+
+  Future<void> _refreshEvent() async {
+    try {
+      final latest = await ApiService.instance.getEvent(_currentEvent.id);
+      if (latest != null && mounted) {
+        setState(() {
+          _currentEvent = latest;
+        });
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    _scannerController.dispose();
+    if (_supportsMobileScanner) {
+      _scannerController?.dispose();
+    }
     super.dispose();
   }
 
@@ -52,19 +78,29 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
     }
   }
 
-  void _processScannedValue(String code) {
-    GuestModel? matched;
-    for (final g in MockData.guests) {
-      if (g.id.toLowerCase() == code.toLowerCase() ||
-          g.passId.toLowerCase() == code.toLowerCase() ||
-          g.email.toLowerCase() == code.toLowerCase() ||
-          g.fullName.toLowerCase() == code.toLowerCase()) {
-        matched = g;
-        break;
-      }
+  Future<void> _processScannedValue(String code) async {
+    final verification = await ApiService.instance.verifyScan(_currentEvent.id, code);
+
+    if (!verification.canCheckIn) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(verification.message),
+          backgroundColor: Colors.amber.shade800,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted) setState(() => _isProcessingScan = false);
+      });
+      return;
     }
 
-    final guest = matched ??
+    final checkInRes = await ApiService.instance.checkInGuest(_currentEvent.id, code);
+    if (!mounted) return;
+
+    final guest = checkInRes.guest ??
+        verification.guest ??
         GuestModel(
           id: 'QR-${code.hashCode.abs().toString().padLeft(6, '0').substring(0, 6)}',
           passId: code.length > 20 ? '${code.substring(0, 17)}...' : code,
@@ -81,11 +117,12 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => TicketValidationScreen(
-          event: widget.event,
+          event: _currentEvent,
           guest: guest,
         ),
       ),
     ).then((_) {
+      _refreshEvent();
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) {
           setState(() {
@@ -96,21 +133,24 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
     });
   }
 
-  void _onSimulateScan() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TicketValidationScreen(
-          event: widget.event,
-          guest: MockData.guests.first,
-        ),
-      ),
-    );
+  Future<void> _onSimulateScan() async {
+    if (_isProcessingScan) return;
+    _isProcessingScan = true;
+    try {
+      final guests = await ApiService.instance.getGuests(_currentEvent.id);
+      final candidate = guests.firstWhere(
+        (g) => !g.isCheckedIn,
+        orElse: () => guests.isNotEmpty ? guests.first : MockData.guests.first,
+      );
+      await _processScannedValue(candidate.passId);
+    } catch (_) {
+      if (mounted) setState(() => _isProcessingScan = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final event = widget.event;
+    final event = _currentEvent;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -288,54 +328,16 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                           children: [
                             // Live MobileScanner Camera
                             Positioned.fill(
-                              child: MobileScanner(
-                                controller: _scannerController,
-                                fit: BoxFit.cover,
-                                onDetect: _onDetect,
-                                errorBuilder: (context, error) {
-                                  return Container(
-                                    color: const Color(0xFF121212),
-                                    alignment: Alignment.center,
-                                    padding: const EdgeInsets.all(16),
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.camera_alt_outlined,
-                                          color: Colors.white54,
-                                          size: 36,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Camera preview unavailable\n(${error.errorCode.name})',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 10),
-                                        TextButton.icon(
-                                          onPressed: _onSimulateScan,
-                                          icon: const Icon(
-                                            Icons.qr_code_scanner,
-                                            size: 16,
-                                            color: AppTheme.accentLime,
-                                          ),
-                                          label: const Text(
-                                            'Tap to simulate scan',
-                                            style: TextStyle(
-                                              color: AppTheme.accentLime,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+                              child: _supportsMobileScanner && _scannerController != null
+                                  ? MobileScanner(
+                                      controller: _scannerController!,
+                                      fit: BoxFit.cover,
+                                      onDetect: _onDetect,
+                                      errorBuilder: (context, error) {
+                                        return _buildScannerPlaceholder(error.errorCode.name);
+                                      },
+                                    )
+                                  : _buildScannerPlaceholder('Simulator mode active'),
                             ),
 
                             // Reticle Frame
@@ -396,7 +398,9 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                                         ? Icons.flash_on
                                         : Icons.flash_off,
                                     onTap: () async {
-                                      await _scannerController.toggleTorch();
+                                      if (_supportsMobileScanner && _scannerController != null) {
+                                        await _scannerController!.toggleTorch();
+                                      }
                                       setState(() {
                                         _flashOn = !_flashOn;
                                       });
@@ -406,7 +410,9 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                                   _buildCameraControl(
                                     icon: Icons.flip_camera_ios_outlined,
                                     onTap: () async {
-                                      await _scannerController.switchCamera();
+                                      if (_supportsMobileScanner && _scannerController != null) {
+                                        await _scannerController!.switchCamera();
+                                      }
                                     },
                                   ),
                                 ],
@@ -447,14 +453,15 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.push(
+                          onPressed: () async {
+                            await Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (_) =>
-                                    RegisteredGuestsScreen(event: event),
+                                    RegisteredGuestsScreen(event: _currentEvent),
                               ),
                             );
+                            _refreshEvent();
                           },
                           icon: const Icon(Icons.person_search_outlined,
                               size: 20),
@@ -531,6 +538,50 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
           border: Border.all(color: Colors.white30, width: 1),
         ),
         child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+
+  Widget _buildScannerPlaceholder(String message) {
+    return Container(
+      color: const Color(0xFF121212),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.camera_alt_outlined,
+            color: Colors.white54,
+            size: 36,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Camera preview unavailable\n($message)',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _onSimulateScan,
+            icon: const Icon(
+              Icons.qr_code_scanner,
+              size: 16,
+              color: AppTheme.accentLime,
+            ),
+            label: const Text(
+              'Tap to simulate scan',
+              style: TextStyle(
+                color: AppTheme.accentLime,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

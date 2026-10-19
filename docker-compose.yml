@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: entree_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgrespassword}
+      POSTGRES_DB: ${PGDATABASE:-entree_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-entree_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: entree_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://${PGUSER:-postgres}:${PGPASSWORD:-postgrespassword}@postgres:5432/${PGDATABASE:-entree_db}
+      MACHINENOVA_BASE_URL: ${MACHINENOVA_BASE_URL:-https://checkin-backend.machinenova.com}
+      MACHINENOVA_FRONTEND_URL: ${MACHINENOVA_FRONTEND_URL:-https://checkin.machinenova.com}
+      MACHINENOVA_ORG_SLUG: ${MACHINENOVA_ORG_SLUG:-}
+      MACHINENOVA_USERNAME: ${MACHINENOVA_USERNAME:-}
+      MACHINENOVA_PASSWORD: ${MACHINENOVA_PASSWORD:-}
+      MACHINENOVA_API_KEY: ${MACHINENOVA_API_KEY:-}
+      MACHINENOVA_API_SECRET: ${MACHINENOVA_API_SECRET:-}
+      ENABLE_AUTO_SYNC: ${ENABLE_AUTO_SYNC:-true}
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres_data:

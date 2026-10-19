@@ -3,6 +3,7 @@ import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
 import '../data/mock_data.dart';
+import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 import 'send_invitation_screen.dart';
 import 'scan_entry_screen.dart';
@@ -24,6 +25,28 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
   final FocusNode _searchFocus = FocusNode();
   final TextEditingController _searchController = TextEditingController();
 
+  bool _isLoading = true;
+  List<GuestModel> _guestsList = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGuests();
+  }
+
+  Future<void> _loadGuests() async {
+    final guests = await ApiService.instance.getGuests(widget.event.id);
+    if (mounted) {
+      setState(() {
+        _guestsList = guests;
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<GuestModel> get _allGuests =>
+      _guestsList.isNotEmpty ? _guestsList : (_isLoading ? MockData.guests : []);
+
   @override
   void dispose() {
     _searchFocus.dispose();
@@ -32,7 +55,7 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
   }
 
   List<GuestModel> get _filteredGuests {
-    final guests = MockData.guests;
+    final guests = _allGuests;
     var list = switch (_selectedFilter) {
       1 => guests.where((g) => !g.isCheckedIn).toList(),
       2 => guests.where((g) => g.isCheckedIn).toList(),
@@ -81,13 +104,14 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => SendInvitationScreen(event: event),
                 ),
               );
+              _loadGuests();
             },
             child: const Text('Invite'),
           ),
@@ -109,9 +133,9 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    Expanded(child: _buildStatItem('${event.passesIssued}', 'Registered')),
-                    Expanded(child: _buildStatItem('${event.checkedIn}', 'Checked in')),
-                    Expanded(child: _buildStatItem('${event.expected}', 'Expected')),
+                    Expanded(child: _buildStatItem('${_allGuests.length}', 'Registered')),
+                    Expanded(child: _buildStatItem('${_allGuests.where((g) => g.isCheckedIn).length}', 'Checked in')),
+                    Expanded(child: _buildStatItem('${_allGuests.where((g) => !g.isCheckedIn).length}', 'Expected')),
                   ],
                 ),
               ),
@@ -161,15 +185,15 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                _buildFilterChip('All · ${MockData.guests.length}', 0),
+                _buildFilterChip('All · ${_allGuests.length}', 0),
                 const SizedBox(width: 8),
                 _buildFilterChip(
-                  'Expected · ${MockData.guests.where((g) => !g.isCheckedIn).length}',
+                  'Expected · ${_allGuests.where((g) => !g.isCheckedIn).length}',
                   1,
                 ),
                 const SizedBox(width: 8),
                 _buildFilterChip(
-                  'Arrived · ${MockData.guests.where((g) => g.isCheckedIn).length}',
+                  'Arrived · ${_allGuests.where((g) => g.isCheckedIn).length}',
                   2,
                 ),
               ],
@@ -210,20 +234,56 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
 
           // Guest list
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: _filteredGuests.length <= _visibleCount
-                  ? _filteredGuests.length
-                  : _visibleCount + 1,
-              separatorBuilder: (context, index) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                if (index == _visibleCount &&
-                    _filteredGuests.length > _visibleCount) {
-                  return _buildLoadMore();
-                }
-                return _buildGuestRow(_filteredGuests[index]);
-              },
-            ),
+            child: _filteredGuests.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.people_outline,
+                            size: 44,
+                            color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _searchQuery.isNotEmpty ? 'No matching guests' : 'No guests registered yet',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _searchQuery.isNotEmpty
+                                ? 'Try searching by another name or pass number.'
+                                : 'Invite attendees or scan passes to add guests.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: _filteredGuests.length <= _visibleCount
+                        ? _filteredGuests.length
+                        : _visibleCount + 1,
+                    separatorBuilder: (context, index) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      if (index == _visibleCount &&
+                          _filteredGuests.length > _visibleCount) {
+                        return _buildLoadMore();
+                      }
+                      return _buildGuestRow(_filteredGuests[index]);
+                    },
+                  ),
           ),
 
           // Bottom actions
@@ -252,14 +312,15 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
+                    onPressed: () async {
+                      await Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) =>
                               ScanEntryScreen(event: widget.event),
                         ),
                       );
+                      _loadGuests();
                     },
                     icon: const Icon(Icons.qr_code_scanner, size: 18),
                     label: const Text('Scan a guest pass'),
@@ -390,22 +451,40 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (guest.isCheckedIn) ...[
-                  const Text(
-                    'Checked in',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.liveGreen,
-                    ),
-                  ),
-                  if (guest.checkInTime != null)
-                    Text(
-                      guest.checkInTime!,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppTheme.textTertiary,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'Checked in',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.liveGreen,
+                            ),
+                          ),
+                          if (guest.checkInTime != null)
+                            Text(
+                              guest.checkInTime!,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTheme.textTertiary,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.undo_rounded, size: 16, color: AppTheme.textTertiary),
+                        tooltip: 'Undo check-in',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _undoCheckIn(guest),
+                      ),
+                    ],
+                  ),
                 ] else ...[
                   const Text(
                     'Not arrived',
@@ -414,24 +493,22 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
                       color: AppTheme.textTertiary,
                     ),
                   ),
+                  const SizedBox(height: 2),
                   GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => TicketValidationScreen(
-                            event: widget.event,
-                            guest: guest,
-                          ),
+                    onTap: () => _checkInGuest(guest),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryPurple.withAlpha(25),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Check in',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryPurple,
                         ),
-                      );
-                    },
-                    child: const Text(
-                      'Check in',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.primaryPurple,
                       ),
                     ),
                   ),
@@ -442,6 +519,77 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _checkInGuest(GuestModel guest) async {
+    final res = await ApiService.instance.checkInGuest(widget.event.id, guest.passId);
+    if (!mounted) return;
+    if (res.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.message.isNotEmpty ? res.message : 'Guest ${guest.fullName} checked in.'),
+          backgroundColor: AppTheme.liveGreen,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      await _loadGuests();
+      if (mounted) {
+        final updatedGuest = _guestsList.firstWhere(
+          (g) => g.id == guest.id || g.passId == guest.passId,
+          orElse: () => res.guest ?? guest.copyWith(status: GuestCheckInStatus.checkedIn, checkInTime: 'Just now'),
+        );
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TicketValidationScreen(
+              event: widget.event,
+              guest: updatedGuest,
+            ),
+          ),
+        ).then((_) => _loadGuests());
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.message),
+          backgroundColor: Colors.amber.shade800,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _undoCheckIn(GuestModel guest) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Revert Check-in'),
+        content: Text('Revert check-in for ${guest.fullName}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Revert', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await ApiService.instance.undoCheckIn(widget.event.id, guest.passId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reverted check-in for ${guest.fullName}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        await _loadGuests();
+      }
+    }
   }
 
   Widget _buildLoadMore() {

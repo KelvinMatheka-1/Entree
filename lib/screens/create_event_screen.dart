@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../models/event_model.dart';
+import '../services/api_service.dart';
 
 class CreateEventScreen extends StatefulWidget {
   const CreateEventScreen({super.key});
@@ -487,8 +489,53 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
+                    onPressed: () async {
+                      final name = _nameController.text.trim();
+                      if (name.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please enter an event name')),
+                        );
+                        return;
+                      }
+                      final tables = int.tryParse(_tablesController.text) ?? 10;
+                      final seats = int.tryParse(_seatsController.text) ?? 10;
+                      final newEvent = EventModel(
+                        id: 'evt-${DateTime.now().millisecondsSinceEpoch}',
+                        name: name,
+                        venue: _venueController.text.trim().isNotEmpty
+                            ? _venueController.text.trim()
+                            : 'Innovation Space',
+                        venueAddress: '100 Tech Square, London',
+                        collection: 'TECHNOLOGY & INNOVATION',
+                        description: _descriptionController.text.trim(),
+                        date: DateTime.now().add(const Duration(days: 7)),
+                        startTime: _startTimeController.text.isNotEmpty
+                            ? _startTimeController.text
+                            : '18:00',
+                        endTime: _endTimeController.text.isNotEmpty
+                            ? _endTimeController.text
+                            : '21:00',
+                        doorsOpenTime: '17:30',
+                        tables: tables,
+                        seatsPerTable: seats,
+                        totalCapacity: tables * seats,
+                        passesIssued: 0,
+                        checkedIn: 0,
+                        status: EventStatus.upcoming,
+                        isPaid: false,
+                        priceBadge: 'Free',
+                      );
+
+                      await ApiService.instance.createEvent(newEvent);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Created "${newEvent.name}" successfully!'),
+                            backgroundColor: AppTheme.accentLime,
+                          ),
+                        );
+                        Navigator.pop(context, true);
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor:

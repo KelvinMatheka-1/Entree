@@ -1,14 +1,14 @@
-# Entrée — Event Check-in & Management App
+# Entree - Event Check-in & Management App
 
 <p align="center">
-  <img src="assets/images/app_logo.jpg" alt="Entrée Logo" width="120" style="border-radius: 24px;" />
+  <img src="assets/images/app_logo.jpg" alt="Entree Logo" width="120" style="border-radius: 24px;" />
   <br>
   <em>Seamless, elegant event guest management and QR check-in experience.</em>
 </p>
 
 ---
 
-## 🚀 Features
+## Features
 
 - **Event Dashboard & Details**: Organize, manage, and monitor events in real-time with comprehensive attendee counts and schedules.
 - **Fast QR Code Scanning**: Scan entry passes quickly using camera-based QR code verification via `mobile_scanner`.
@@ -19,21 +19,24 @@
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-- **Framework**: [Flutter](https://flutter.dev) (Dart SDK `^3.13.2`)
-- **Icons & Typography**: `google_fonts`, `cupertino_icons`
+- **Client App**: [Flutter](https://flutter.dev) (Dart SDK `^3.13.2`) with Light/Dark adaptive glass UI.
+- **Backend Service**: Node.js & TypeScript 5.8 (Express 4) with PostgreSQL and offline sync queue.
+- **Database**: PostgreSQL 16
+- **Deployment**: Docker and Docker Compose
+- **Event & Check-in Infrastructure**: Integrated with [MachineNova](https://machinenova.com) (`checkin-backend.machinenova.com`) Event & Roster APIs.
 - **Barcode & QR Scanner**: `mobile_scanner`
-- **Networking & Utilities**: `http`, `intl`
+- **Networking & Utilities**: `http`, `intl`, `pg`, `axios`
 
 ---
 
-## 📱 Getting Started
+## Getting Started
 
 ### Prerequisites
 
 - [Flutter SDK](https://docs.flutter.dev/get-started/install) installed on your system.
-- Android Studio / Xcode / VS Code configured with Flutter plugins.
+- Docker and Docker Compose installed.
 
 ### Installation & Run
 
@@ -43,13 +46,14 @@
    cd Entree
    ```
 
-2. **Install dependencies**:
+2. **Run Backend and PostgreSQL with Docker Compose**:
    ```bash
-   flutter pub get
+   docker compose up -d
    ```
 
-3. **Run the app**:
+3. **Install Flutter dependencies & Run**:
    ```bash
+   flutter pub get
    flutter run
    ```
 
@@ -60,6 +64,6 @@
 
 ---
 
-## 📄 License
+## License
 
 This project is proprietary and developed by [Kelvin Matheka](https://github.com/KelvinMatheka-1). All rights reserved.

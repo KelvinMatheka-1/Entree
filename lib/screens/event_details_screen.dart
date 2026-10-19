@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
+import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 import 'edit_event_screen.dart';
 import 'registered_guests_screen.dart';
@@ -19,9 +20,38 @@ class EventDetailsScreen extends StatefulWidget {
 }
 
 class _EventDetailsScreenState extends State<EventDetailsScreen> {
+  late EventModel _currentEvent;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentEvent = widget.event;
+    _refreshEvent();
+  }
+
+  Future<void> _refreshEvent() async {
+    if (_isRefreshing) return;
+    _isRefreshing = true;
+    try {
+      final latest = await ApiService.instance.getEvent(_currentEvent.id);
+      if (latest != null && mounted) {
+        setState(() {
+          _currentEvent = latest;
+        });
+      }
+    } catch (e) {
+      debugPrint('[EventDetailsScreen] Failed to refresh event: $e');
+    } finally {
+      if (mounted) {
+        _isRefreshing = false;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final event = widget.event;
+    final event = _currentEvent;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -81,35 +111,72 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                 child: const Icon(Icons.more_vert_rounded,
                     size: 18, color: AppTheme.textPrimary),
               ),
-              onSelected: (val) {
+              onSelected: (val) async {
                 if (val == 'scan') {
-                  Navigator.push(
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => ScanEntryScreen(event: event),
+                      builder: (_) => ScanEntryScreen(event: _currentEvent),
                     ),
                   );
+                  _refreshEvent();
                 } else if (val == 'guests') {
-                  Navigator.push(
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => RegisteredGuestsScreen(event: event),
+                      builder: (_) => RegisteredGuestsScreen(event: _currentEvent),
                     ),
                   );
+                  _refreshEvent();
                 } else if (val == 'invite') {
-                  Navigator.push(
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => SendInvitationScreen(event: event),
+                      builder: (_) => SendInvitationScreen(event: _currentEvent),
                     ),
                   );
+                  _refreshEvent();
                 } else if (val == 'edit') {
-                  Navigator.push(
+                  final result = await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => EditEventScreen(event: event),
+                      builder: (_) => EditEventScreen(event: _currentEvent),
                     ),
                   );
+                  if (result == 'deleted') {
+                    if (context.mounted) Navigator.pop(context, true);
+                  } else if (result is EventModel) {
+                    setState(() => _currentEvent = result);
+                  } else {
+                    _refreshEvent();
+                  }
+                } else if (val == 'delete') {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Delete Event'),
+                      content: Text('Are you sure you want to delete "${_currentEvent.name}"? This action cannot be undone.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true && context.mounted) {
+                    await ApiService.instance.deleteEvent(_currentEvent.id);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Event "${_currentEvent.name}" deleted')),
+                      );
+                      Navigator.pop(context, true);
+                    }
+                  }
                 }
               },
               itemBuilder: (context) => [
@@ -153,16 +220,31 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                     ],
                   ),
                 ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                      SizedBox(width: 10),
+                      Text('Delete Event', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
               ],
             ),
             const SizedBox(width: 16),
           ],
         ),
-        body: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        body: RefreshIndicator(
+          color: AppTheme.accentCoral,
+          onRefresh: _refreshEvent,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 1. Rounded Top Photo Banner (matches reference)
               ClipRRect(
@@ -378,13 +460,14 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
+                            onPressed: () async {
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => ScanEntryScreen(event: event),
+                                  builder: (_) => ScanEntryScreen(event: _currentEvent),
                                 ),
                               );
+                              _refreshEvent();
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppTheme.primaryBlack,
@@ -408,14 +491,15 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
+                            onPressed: () async {
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) =>
-                                      RegisteredGuestsScreen(event: event),
+                                      RegisteredGuestsScreen(event: _currentEvent),
                                 ),
                               );
+                              _refreshEvent();
                             },
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppTheme.textPrimary,
@@ -438,14 +522,15 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                         ),
                         const SizedBox(width: 10),
                         OutlinedButton(
-                          onPressed: () {
-                            Navigator.push(
+                          onPressed: () async {
+                            await Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (_) =>
-                                    SendInvitationScreen(event: event),
+                                    SendInvitationScreen(event: _currentEvent),
                               ),
                             );
+                            _refreshEvent();
                           },
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppTheme.textPrimary,
@@ -468,7 +553,8 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 

@@ -50,3 +50,9 @@ app.*.map.json
 # Android build outputs and packages
 *.apk
 
+# Node.js backend
+backend/node_modules/
+backend/dist/
+backend/data/
+backend/.env
+
