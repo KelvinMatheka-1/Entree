@@ -635,72 +635,16 @@ class _GuestInvitationScreenState extends State<GuestInvitationScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        "YOU'RE INVITED",
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                          color: isDark
-                                              ? AppTheme.accentLime
-                                              : AppTheme.primaryPurple,
-                                          letterSpacing: 0.8,
-                                        ),
-                                      ),
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Container(
-                                            width: 22,
-                                            height: 22,
-                                            decoration: BoxDecoration(
-                                              color: isDark
-                                                  ? Colors.black
-                                                  : Colors.white,
-                                              borderRadius:
-                                                  BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: isDark
-                                                    ? Colors.white24
-                                                    : AppTheme.borderLight,
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(5),
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.all(2.5),
-                                                child: Image.asset(
-                                                  isDark
-                                                      ? 'assets/images/app_logo_cropped.png'
-                                                      : 'assets/images/app_logo_light_cropped.png',
-                                                  fit: BoxFit.contain,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            'entrée',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700,
-                                              color: isDark
-                                                  ? AppTheme.darkTextPrimary
-                                                  : AppTheme.textPrimary,
-                                              letterSpacing: -0.2,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                  Text(
+                                    "YOU'RE INVITED",
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: isDark
+                                          ? AppTheme.accentLime
+                                          : AppTheme.primaryPurple,
+                                      letterSpacing: 0.8,
+                                    ),
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
@@ -919,7 +863,7 @@ class _GuestInvitationScreenState extends State<GuestInvitationScreen> {
                                         ),
                                         const SizedBox(width: 8),
                                         Text(
-                                          'Official Digital Entry Pass · Powered by entrée',
+                                          'Official Digital Pass, Powered by Entrée',
                                           style: TextStyle(
                                             fontSize: 11,
                                             fontWeight: FontWeight.w600,
