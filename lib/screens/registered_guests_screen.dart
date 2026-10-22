@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
-import '../data/mock_data.dart';
 import '../services/api_service.dart';
 import '../widgets/common_widgets.dart';
 import 'send_invitation_screen.dart';
@@ -44,8 +43,7 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
     }
   }
 
-  List<GuestModel> get _allGuests =>
-      _guestsList.isNotEmpty ? _guestsList : (_isLoading ? MockData.guests : []);
+  List<GuestModel> get _allGuests => _guestsList;
 
   @override
   void dispose() {
@@ -103,6 +101,11 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Add / Invite Guest',
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+            onPressed: _showAddGuestDialog,
+          ),
           TextButton(
             onPressed: () async {
               await Navigator.push(
@@ -113,7 +116,7 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
               );
               _loadGuests();
             },
-            child: const Text('Invite'),
+            child: const Text('Share'),
           ),
         ],
       ),
@@ -234,8 +237,14 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
 
           // Guest list
           Expanded(
-            child: _filteredGuests.isEmpty
-                ? Center(
+            child: _isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentLime),
+                    ),
+                  )
+                : _filteredGuests.isEmpty
+                    ? Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24.0),
                       child: Column(
@@ -359,6 +368,7 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
   }
 
   Widget _buildStatItem(String value, String label) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -366,16 +376,19 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
           fit: BoxFit.scaleDown,
           child: Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.w700,
-              color: AppTheme.textPrimary,
+              color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
             ),
           ),
         ),
         Text(
           label,
-          style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -384,21 +397,31 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
   }
 
   Widget _buildFilterChip(String label, int index) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final isSelected = _selectedFilter == index;
     return GestureDetector(
       onTap: () => setState(() => _selectedFilter = index),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFECEBFE) : const Color(0xFFF3F4F6),
+          color: isSelected
+              ? (isDark ? AppTheme.accentLime.withValues(alpha: 0.20) : const Color(0xFFECEBFE))
+              : (isDark ? AppTheme.darkCard : const Color(0xFFF3F4F6)),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected
+                ? (isDark ? AppTheme.accentLime.withValues(alpha: 0.5) : const Color(0xFFC7D2FE))
+                : (isDark ? AppTheme.darkCardBorder : Colors.transparent),
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontSize: 12,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-            color: isSelected ? AppTheme.primaryPurple : AppTheme.textSecondary,
+            color: isSelected
+                ? (isDark ? AppTheme.accentLime : AppTheme.primaryPurple)
+                : (isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary),
           ),
         ),
       ),
@@ -406,6 +429,7 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
   }
 
   Widget _buildGuestRow(GuestModel guest) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return InkWell(
       onTap: () {
         Navigator.push(
@@ -430,18 +454,18 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
                 children: [
                   Text(
                     guest.fullName,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: AppTheme.textPrimary,
+                      color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     '${guest.passId} · Table ${guest.tableNumber}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: AppTheme.textSecondary,
+                      color: isDark ? AppTheme.darkTextTertiary : AppTheme.textSecondary,
                     ),
                   ),
                 ],
@@ -620,6 +644,165 @@ class _RegisteredGuestsScreenState extends State<RegisteredGuestsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showAddGuestDialog() {
+    final nameCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    final tableCtrl = TextEditingController(text: '01');
+    String admission = 'VIP Pass';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 24,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.darkSurface : Colors.white,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Invite New Guest',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? Colors.white : AppTheme.textPrimary,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: nameCtrl,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Full Name',
+                      hintText: 'e.g. Alex Mercer',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email Address (optional)',
+                      hintText: 'alex@example.com',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: tableCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Table Number',
+                            hintText: '01',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: admission,
+                          decoration: const InputDecoration(labelText: 'Admission Tier'),
+                          items: const [
+                            DropdownMenuItem(value: 'VIP Pass', child: Text('VIP Pass')),
+                            DropdownMenuItem(value: 'Speaker Pass', child: Text('Speaker Pass')),
+                            DropdownMenuItem(value: 'Standard Pass', child: Text('Standard Pass')),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) setModalState(() => admission = val);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final name = nameCtrl.text.trim();
+                        if (name.isEmpty) return;
+                        final passId = 'HS-${(1000 + DateTime.now().millisecondsSinceEpoch % 9000)}';
+                        final newGuest = GuestModel(
+                          id: 'g-${DateTime.now().millisecondsSinceEpoch}',
+                          passId: passId,
+                          fullName: name,
+                          email: emailCtrl.text.trim().isNotEmpty ? emailCtrl.text.trim() : '$name@guest.entree.app',
+                          tableNumber: tableCtrl.text.trim().isNotEmpty ? tableCtrl.text.trim() : '01',
+                          tableName: 'Reserved Seating',
+                          status: GuestCheckInStatus.notArrived,
+                          admission: admission,
+                          guestCount: 1,
+                        );
+
+                        final messenger = ScaffoldMessenger.of(context);
+                        final rootNav = Navigator.of(context);
+                        final modalNav = Navigator.of(ctx);
+
+                        final savedGuest =
+                            await ApiService.instance.addGuest(widget.event.id, newGuest);
+                        modalNav.pop();
+                        await _loadGuests();
+                        if (!mounted) return;
+
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text('Invited $name ($passId)! Digital ticket pass ready.'),
+                            backgroundColor: AppTheme.accentLime,
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+
+                        rootNav.push(
+                          MaterialPageRoute(
+                            builder: (_) => GuestInvitationScreen(
+                              event: widget.event,
+                              guest: savedGuest,
+                            ),
+                          ),
+                        ).then((_) {
+                          if (mounted) _loadGuests();
+                        });
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                        foregroundColor: isDark ? Colors.black : Colors.white,
+                      ),
+                      child: const Text('Add & Issue Pass'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

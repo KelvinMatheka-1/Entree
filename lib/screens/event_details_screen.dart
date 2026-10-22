@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../services/api_service.dart';
@@ -98,6 +99,27 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
           ),
           centerTitle: true,
           actions: [
+            IconButton(
+              tooltip: 'Share RSVP Link',
+              icon: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.borderLight),
+                ),
+                child: const Icon(Icons.share_outlined,
+                    size: 18, color: AppTheme.textPrimary),
+              ),
+              onPressed: () {
+                final link = InviteCryptoService.generateEventRsvpLink(_currentEvent.id);
+                Share.share(
+                  'Join us for "${_currentEvent.name}" at ${_currentEvent.venue}! Reserve your cryptographic pass here: $link',
+                  subject: 'RSVP Invitation: ${_currentEvent.name}',
+                );
+              },
+            ),
             // Organizer tools menu
             PopupMenuButton<String>(
               icon: Container(
@@ -112,7 +134,13 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                     size: 18, color: AppTheme.textPrimary),
               ),
               onSelected: (val) async {
-                if (val == 'scan') {
+                if (val == 'share_rsvp') {
+                  final link = InviteCryptoService.generateEventRsvpLink(_currentEvent.id);
+                  Share.share(
+                    'Join us for "${_currentEvent.name}" at ${_currentEvent.venue}! Reserve your cryptographic pass here: $link',
+                    subject: 'RSVP Invitation: ${_currentEvent.name}',
+                  );
+                } else if (val == 'scan') {
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -180,6 +208,16 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                 }
               },
               itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'share_rsvp',
+                  child: Row(
+                    children: [
+                      Icon(Icons.share_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Share Event RSVP Link'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'scan',
                   child: Row(
@@ -322,7 +360,7 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${event.passesIssued} Going',
+                        '${event.passesIssued} Guests',
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -406,16 +444,48 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF3F4F6),
+                            color: event.isCheckInFull
+                                ? const Color(0xFFFEF2F2)
+                                : const Color(0xFFF3F4F6),
                             borderRadius: BorderRadius.circular(12),
+                            border: event.isCheckInFull
+                                ? Border.all(color: const Color(0xFFEF4444).withAlpha(120))
+                                : null,
                           ),
-                          child: Text(
-                            '${event.checkedIn}/${event.passesIssued} In',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textSecondary,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (event.isCheckInFull) ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  margin: const EdgeInsets.only(right: 6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEF4444),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'FULL',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              Text(
+                                '${event.checkedIn}/${event.passesIssued} In',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: event.isCheckInFull
+                                      ? const Color(0xFFDC2626)
+                                      : AppTheme.textSecondary,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -425,11 +495,13 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: LinearProgressIndicator(
-                        value: event.checkedInPercentage,
+                        value: event.isCheckInFull ? 1.0 : event.checkedInPercentage,
                         minHeight: 8,
                         backgroundColor: AppTheme.borderLight,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          AppTheme.accentCoral,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          event.isCheckInFull
+                              ? const Color(0xFF10B981)
+                              : AppTheme.accentCoral,
                         ),
                       ),
                     ),
@@ -438,19 +510,27 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          '${(event.checkedInPercentage * 100).toInt()}% Checked In',
+                          event.isCheckInFull
+                              ? '100% · All Checked In (FULL)'
+                              : '${(event.checkedInPercentage * 100).toInt()}% Checked In',
                           style: GoogleFonts.inter(
                             fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: AppTheme.textTertiary,
+                            fontWeight: FontWeight.w600,
+                            color: event.isCheckInFull
+                                ? const Color(0xFF059669)
+                                : AppTheme.textTertiary,
                           ),
                         ),
                         Text(
-                          '${event.expected} Expected',
+                          event.isCheckInFull
+                              ? '0 Expected · Full House'
+                              : '${event.expected} Expected',
                           style: GoogleFonts.inter(
                             fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: AppTheme.textTertiary,
+                            fontWeight: FontWeight.w600,
+                            color: event.isCheckInFull
+                                ? const Color(0xFF059669)
+                                : AppTheme.textTertiary,
                           ),
                         ),
                       ],

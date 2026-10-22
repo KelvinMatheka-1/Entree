@@ -1,4 +1,6 @@
 import 'dart:ui';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
@@ -121,19 +123,12 @@ class EventHeaderCompact extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Container(
+        SafeNetworkImage(
+          imageUrl: event.imageUrl,
           width: 44,
           height: 44,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            color: AppTheme.draftGrayBg,
-            image: const DecorationImage(
-              image: NetworkImage(
-                'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=100&h=100&fit=crop',
-              ),
-              fit: BoxFit.cover,
-            ),
-          ),
+          borderRadius: BorderRadius.circular(10),
+          fit: BoxFit.cover,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -143,11 +138,15 @@ class EventHeaderCompact extends StatelessWidget {
               Text(
                 event.name,
                 style: Theme.of(context).textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
-                '${event.shortDate.substring(0, 6)} ${event.date.year} · ${event.venue}',
+                '${event.shortDate} ${event.date.year} · ${event.venue}',
                 style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -312,7 +311,18 @@ class AvatarStack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final count = maxAvatars.clamp(1, 4);
+    // If an avatar list is provided and it is empty, hide avatars
+    if (avatars != null && avatars!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final avatarList = avatars ?? const <String>[];
+    final count = avatarList.isNotEmpty
+        ? avatarList.length.clamp(1, maxAvatars)
+        : (avatars == null ? maxAvatars.clamp(1, 4) : 0);
+
+    if (count == 0) return const SizedBox.shrink();
+
     final totalWidth = size + (count - 1) * (size - overlap);
 
     return SizedBox(
@@ -534,6 +544,7 @@ class SafeNetworkImage extends StatelessWidget {
   final double? height;
   final BorderRadiusGeometry borderRadius;
   final BoxFit fit;
+  final Alignment alignment;
 
   const SafeNetworkImage({
     super.key,
@@ -542,36 +553,144 @@ class SafeNetworkImage extends StatelessWidget {
     this.height,
     this.borderRadius = BorderRadius.zero,
     this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
   });
+
+  // Fast mapping of known event image URLs to bundled high-speed local assets
+  static String? _getFallbackAsset(String? url) {
+    if (url == null || url.isEmpty) return 'assets/images/event_keynote_stage.jpg';
+    if (url.startsWith('assets/')) return url;
+    if (url.contains('540575467063')) return 'assets/images/event_keynote_stage.jpg';
+    if (url.contains('515187029135')) return 'assets/images/damascus_steel.jpg';
+    if (url.contains('505373877841')) return 'assets/images/professor_antikythera.jpg';
+    if (url.contains('526374965328')) return 'assets/images/japanese_samurai.jpg';
+    if (url.contains('1485827404703')) return 'assets/images/event_keynote_stage.jpg';
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: imageUrl != null && imageUrl!.isNotEmpty
-          ? Image.network(
-              imageUrl!,
+    final url = imageUrl;
+    final fallbackAsset = _getFallbackAsset(url);
+
+    Widget imageWidget;
+
+    if (url == null || url.isEmpty) {
+      imageWidget = fallbackAsset != null
+          ? Image.asset(
+              fallbackAsset,
               width: width,
               height: height,
               fit: fit,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return Container(
-                  width: width,
-                  height: height,
-                  color: AppTheme.draftGrayBg,
-                  child: const Center(
-                    child: Icon(
-                      Icons.event_outlined,
-                      color: AppTheme.borderMedium,
-                      size: 24,
-                    ),
-                  ),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+              alignment: alignment,
+              errorBuilder: (_, _, _) => _buildPlaceholder(),
             )
-          : _buildPlaceholder(),
+          : _buildPlaceholder();
+    } else if (url.startsWith('assets/')) {
+      imageWidget = Image.asset(
+        url,
+        width: width,
+        height: height,
+        fit: fit,
+        alignment: alignment,
+        errorBuilder: (context, error, stackTrace) => fallbackAsset != null
+            ? Image.asset(
+                fallbackAsset,
+                width: width,
+                height: height,
+                fit: fit,
+                alignment: alignment,
+                errorBuilder: (_, _, _) => _buildPlaceholder(),
+              )
+            : _buildPlaceholder(),
+      );
+    } else if (!kIsWeb && (url.startsWith('/') || url.startsWith('file:'))) {
+      final cleanPath = url.startsWith('file://') ? url.replaceFirst('file://', '') : url;
+      imageWidget = Image.file(
+        File(cleanPath),
+        width: width,
+        height: height,
+        fit: fit,
+        alignment: alignment,
+        errorBuilder: (context, error, stackTrace) => fallbackAsset != null
+            ? Image.asset(
+                fallbackAsset,
+                width: width,
+                height: height,
+                fit: fit,
+                alignment: alignment,
+                errorBuilder: (_, _, _) => _buildPlaceholder(),
+              )
+            : _buildPlaceholder(),
+      );
+    } else {
+      imageWidget = Image.network(
+        url,
+        width: width,
+        height: height,
+        fit: fit,
+        alignment: alignment,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0.0 : 1.0,
+            duration: const Duration(milliseconds: 240),
+            curve: const Cubic(0.16, 1.0, 0.3, 1.0), // GSAP power3.out curve
+            child: child,
+          );
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          if (fallbackAsset != null) {
+            return Image.asset(
+              fallbackAsset,
+              width: width,
+              height: height,
+              fit: fit,
+              alignment: alignment,
+              errorBuilder: (_, _, _) => _buildLoadingPlaceholder(),
+            );
+          }
+          return _buildLoadingPlaceholder();
+        },
+        errorBuilder: (context, error, stackTrace) {
+          if (fallbackAsset != null) {
+            return Image.asset(
+              fallbackAsset,
+              width: width,
+              height: height,
+              fit: fit,
+              alignment: alignment,
+              errorBuilder: (_, _, _) => _buildPlaceholder(),
+            );
+          }
+          return _buildPlaceholder();
+        },
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: imageWidget,
+    );
+  }
+
+  Widget _buildLoadingPlaceholder() {
+    return Container(
+      width: width,
+      height: height,
+      color: const Color(0xFF141414),
+      child: const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentLime),
+          ),
+        ),
+      ),
     );
   }
 
@@ -579,18 +698,12 @@ class SafeNetworkImage extends StatelessWidget {
     return Container(
       width: width,
       height: height,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFF3F4F6), Color(0xFFE5E7EB)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
+      color: const Color(0xFF141414),
       child: const Center(
         child: Icon(
           Icons.event_outlined,
-          color: Color(0xFF9CA3AF),
-          size: 32,
+          color: Color(0xFF333333),
+          size: 26,
         ),
       ),
     );

@@ -3,7 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
-import '../data/mock_data.dart';
+import '../models/user_profile_model.dart';
+import 'local_storage_service.dart';
+import 'pass_token_service.dart';
+
+export 'invite_crypto_service.dart'
+    show VerificationResult, CheckInVerificationType, InvitePayloadResult, InviteCryptoService;
 
 class ScanResult {
   final bool canCheckIn;
@@ -55,26 +60,51 @@ class ApiService {
   ApiService._();
   static final ApiService instance = ApiService._();
 
-  // Change baseUrl as needed for emulator / physical device / production
-  // Android emulator: 'http://10.0.2.2:4000/api/v1'
-  // iOS simulator / Desktop / Web: 'http://localhost:4000/api/v1'
+  /// Clean environment toggle for MachineNova live upstream integration
+  /// Defaults to false so developers can work solo without active organization credentials.
+  static bool useMachineNovaLive =
+      const bool.fromEnvironment('USE_MACHINENOVA_LIVE', defaultValue: false);
+
+  /// Dynamic preference checker combining environment default and SharedPreferences
+  static bool get isMachineNovaLiveEnabled =>
+      LocalStorageService.instance.getUseMachineNovaLive() || useMachineNovaLive;
+
+  /// Set the environment toggle dynamically at runtime
+  static Future<void> setUseMachineNovaLive(bool enabled) async {
+    useMachineNovaLive = enabled;
+    await LocalStorageService.instance.setUseMachineNovaLive(enabled);
+  }
+
+  // Base URL for production / local proxy
   static String baseUrl = 'http://localhost:4000/api/v1';
 
   bool _isBackendReachable = true;
-
-  // In-memory cache synced with backend or fallback to MockData
-  final List<EventModel> _cachedEvents = [];
-  final Map<String, List<GuestModel>> _cachedGuests = {};
-
   bool get isBackendReachable => _isBackendReachable;
 
-  // --- EVENTS ---
+  // --- CRYPTOGRAPHIC QR TOKEN UTILITIES ---
+
+  /// Encodes a verifiable, cryptographically signed JWT pass token for an event attendee
+  String generatePassToken(EventModel event, GuestModel guest) {
+    return PassTokenService.generatePassToken(event: event, guest: guest);
+  }
+
+  /// Parses and verifies any raw barcode/JWT input
+  PassTokenPayload decodePassToken(String rawCode, {String? defaultEventId}) {
+    return PassTokenService.decodeToken(rawCode, defaultEventId: defaultEventId);
+  }
+
+  // --- EVENTS CRUD ---
 
   Future<List<EventModel>> getEvents({
     String? status,
     String? search,
     bool refresh = false,
   }) async {
+    // When live MachineNova toggle is OFF, route directly through persistent local storage
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.getEvents(status: status, search: search);
+    }
+
     try {
       final queryParams = <String, String>{};
       if (status != null && status.isNotEmpty) queryParams['status'] = status;
@@ -85,9 +115,7 @@ class ApiService {
         queryParameters: queryParams.isNotEmpty ? queryParams : null,
       );
 
-      final response = await http
-          .get(uri)
-          .timeout(const Duration(seconds: 4));
+      final response = await http.get(uri).timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -96,35 +124,27 @@ class ApiService {
             .toList();
 
         _isBackendReachable = true;
-        _cachedEvents.clear();
-        _cachedEvents.addAll(list);
+        // Mirror to local persistent cache
+        for (final ev in list) {
+          await LocalStorageService.instance.updateEvent(ev);
+        }
         return list;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] 401/403 MachineNova Auth failed, falling back to persistent local storage engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] getEvents fallback to local cache: $e');
+      debugPrint('[API_SERVICE] getEvents network error, falling back to persistent local storage: $e');
       _isBackendReachable = false;
     }
 
-    // Local fallback
-    if (_cachedEvents.isEmpty) {
-      _cachedEvents.addAll(MockData.events);
-    }
-
-    var list = List<EventModel>.from(_cachedEvents);
-    if (status != null && status.isNotEmpty) {
-      list = list.where((e) => e.status.name.toLowerCase() == status.toLowerCase()).toList();
-    }
-    if (search != null && search.isNotEmpty) {
-      final s = search.toLowerCase();
-      list = list.where((e) =>
-          e.name.toLowerCase().contains(s) ||
-          e.venue.toLowerCase().contains(s) ||
-          e.collection.toLowerCase().contains(s)).toList();
-    }
-    return list;
+    return LocalStorageService.instance.getEvents(status: status, search: search);
   }
 
   Future<EventModel?> getEvent(String id) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.getEvent(id);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/$id');
       final response = await http.get(uri).timeout(const Duration(seconds: 4));
@@ -132,25 +152,24 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _isBackendReachable = true;
-        return EventModel.fromJson(data['event']);
+        final event = EventModel.fromJson(data['event']);
+        await LocalStorageService.instance.updateEvent(event);
+        return event;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] getEvent 401/403 auth error, falling back to local engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] getEvent fallback: $e');
+      debugPrint('[API_SERVICE] getEvent network error, falling back to local engine: $e');
     }
 
-    // Fallback search
-    try {
-      return _cachedEvents.firstWhere((e) => e.id == id);
-    } catch (_) {
-      try {
-        return MockData.events.firstWhere((e) => e.id == id);
-      } catch (_) {
-        return null;
-      }
-    }
+    return LocalStorageService.instance.getEvent(id);
   }
 
   Future<EventModel> createEvent(EventModel event) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.createEvent(event);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events');
       final response = await http
@@ -164,19 +183,23 @@ class ApiService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
         final created = EventModel.fromJson(data['event']);
-        _cachedEvents.insert(0, created);
+        await LocalStorageService.instance.createEvent(created);
         return created;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] createEvent 401/403 auth error, saving to local engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] createEvent fallback: $e');
+      debugPrint('[API_SERVICE] createEvent network error, saving to local engine: $e');
     }
 
-    // Fallback local addition
-    _cachedEvents.insert(0, event);
-    return event;
+    return LocalStorageService.instance.createEvent(event);
   }
 
   Future<EventModel> updateEvent(EventModel event) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.updateEvent(event);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/${event.id}');
       final response = await http
@@ -190,42 +213,50 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final updated = EventModel.fromJson(data['event']);
-        final idx = _cachedEvents.indexWhere((e) => e.id == event.id);
-        if (idx != -1) _cachedEvents[idx] = updated;
+        await LocalStorageService.instance.updateEvent(updated);
         return updated;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] updateEvent 401/403 auth error, updating local engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] updateEvent fallback: $e');
+      debugPrint('[API_SERVICE] updateEvent network error, updating local engine: $e');
     }
 
-    final idx = _cachedEvents.indexWhere((e) => e.id == event.id);
-    if (idx != -1) _cachedEvents[idx] = event;
-    return event;
+    return LocalStorageService.instance.updateEvent(event);
   }
 
   Future<bool> deleteEvent(String id) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.deleteEvent(id);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/$id');
       final response = await http.delete(uri).timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
-        _cachedEvents.removeWhere((e) => e.id == id);
+        await LocalStorageService.instance.deleteEvent(id);
         return true;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] deleteEvent 401/403 auth error, deleting locally.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] deleteEvent fallback: $e');
+      debugPrint('[API_SERVICE] deleteEvent network error: $e');
     }
 
-    _cachedEvents.removeWhere((e) => e.id == id);
-    return true;
+    return LocalStorageService.instance.deleteEvent(id);
   }
 
-  // --- GUESTS ---
+  // --- GUESTS CRUD & INVITES ---
 
   Future<List<GuestModel>> getGuests(
     String eventId, {
     String? status,
     String? search,
   }) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.getGuests(eventId, status: status, search: search);
+    }
+
     try {
       final queryParams = <String, String>{};
       if (status != null && status.isNotEmpty) queryParams['status'] = status;
@@ -242,33 +273,25 @@ class ApiService {
             .map((g) => GuestModel.fromJson(g as Map<String, dynamic>))
             .toList();
 
-        _cachedGuests[eventId] = list;
+        for (final g in list) {
+          await LocalStorageService.instance.addGuest(eventId, g);
+        }
         return list;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] getGuests 401/403 auth error, falling back to local engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] getGuests fallback: $e');
+      debugPrint('[API_SERVICE] getGuests network error, falling back to local engine: $e');
     }
 
-    // Fallback to local cache or MockData
-    if (!_cachedGuests.containsKey(eventId) || _cachedGuests[eventId]!.isEmpty) {
-      _cachedGuests[eventId] = List<GuestModel>.from(MockData.guests);
-    }
-
-    var list = _cachedGuests[eventId]!;
-    if (status != null && status.isNotEmpty) {
-      list = list.where((g) => g.status.name.toLowerCase() == status.toLowerCase()).toList();
-    }
-    if (search != null && search.isNotEmpty) {
-      final s = search.toLowerCase();
-      list = list.where((g) =>
-          g.fullName.toLowerCase().contains(s) ||
-          g.passId.toLowerCase().contains(s) ||
-          g.email.toLowerCase().contains(s)).toList();
-    }
-    return list;
+    return LocalStorageService.instance.getGuests(eventId, status: status, search: search);
   }
 
   Future<GuestModel> addGuest(String eventId, GuestModel guest) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.addGuest(eventId, guest);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/$eventId/guests');
       final response = await http
@@ -282,67 +305,101 @@ class ApiService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
         final created = GuestModel.fromJson(data['guest']);
-        _cachedGuests[eventId] = [created, ...?_cachedGuests[eventId]];
+        await LocalStorageService.instance.addGuest(eventId, created);
         return created;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] addGuest 401/403 auth error, saving to local engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] addGuest fallback: $e');
+      debugPrint('[API_SERVICE] addGuest network error, saving to local engine: $e');
     }
 
-    _cachedGuests[eventId] = [guest, ...?_cachedGuests[eventId]];
-    return guest;
+    return LocalStorageService.instance.addGuest(eventId, guest);
   }
 
-  // --- SCAN & CHECK-IN ---
+  /// Self-service attendee RSVP: registers a new attendee, creates a signed pass,
+  /// updates event's passesIssued count, and saves to storage
+  Future<GuestModel> rsvpGuest({
+    required String eventId,
+    required String fullName,
+    required String email,
+    String? phone,
+  }) async {
+    return LocalStorageService.instance.rsvpGuest(
+      eventId: eventId,
+      fullName: fullName,
+      email: email,
+      phone: phone,
+    );
+  }
 
-  Future<ScanResult> verifyScan(String eventId, String passId) async {
+  // --- SCAN & CHECK-IN VALIDATION ---
+
+  Future<ScanResult> verifyScan(String eventId, String passIdOrToken) async {
+    final tokenPayload = PassTokenService.decodeToken(passIdOrToken, defaultEventId: eventId);
+    final rawPassId = tokenPayload.passId;
+
+    if (!isMachineNovaLiveEnabled) {
+      final localRes = await LocalStorageService.instance.verifyScan(eventId, passIdOrToken);
+      return ScanResult(
+        canCheckIn: localRes.canCheckIn,
+        status: localRes.status,
+        message: localRes.message,
+        guest: localRes.guest,
+        outsideJurisdiction: localRes.outsideJurisdiction,
+      );
+    }
+
     try {
-      final uri = Uri.parse('$baseUrl/events/$eventId/scan?passId=${Uri.encodeComponent(passId)}');
+      final uri = Uri.parse(
+        '$baseUrl/events/$eventId/scan?passId=${Uri.encodeComponent(rawPassId)}',
+      );
       final response = await http.get(uri).timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return ScanResult.fromJson(data['verification']);
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] verifyScan 401/403, validating via local persistent engine.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] verifyScan fallback: $e');
+      debugPrint('[API_SERVICE] verifyScan network error, validating via local persistent engine: $e');
     }
 
-    // Local fallback logic
-    final guests = _cachedGuests[eventId] ?? MockData.guests;
-    try {
-      final g = guests.firstWhere(
-        (it) => it.passId.toLowerCase() == passId.toLowerCase(),
-      );
-      if (g.isCheckedIn) {
-        return ScanResult(
-          canCheckIn: false,
-          status: 'already_checked_in',
-          message: 'Already checked in at ${g.checkInTime ?? "earlier"}',
-          guest: g,
-        );
-      }
-      return ScanResult(
-        canCheckIn: true,
-        status: 'ready',
-        message: 'Valid Pass. Ready for Check-in',
-        guest: g,
-      );
-    } catch (_) {
-      return ScanResult(
-        canCheckIn: true,
-        status: 'ready',
-        message: 'Pass verified. Ready for Check-in',
-      );
-    }
+    final localRes = await LocalStorageService.instance.verifyScan(eventId, passIdOrToken);
+    return ScanResult(
+      canCheckIn: localRes.canCheckIn,
+      status: localRes.status,
+      message: localRes.message,
+      guest: localRes.guest,
+      outsideJurisdiction: localRes.outsideJurisdiction,
+    );
   }
 
   Future<CheckInResult> checkInGuest(
     String eventId,
-    String passId, {
+    String passIdOrToken, {
     String? operatorId,
     String? fullName,
   }) async {
+    final tokenPayload = PassTokenService.decodeToken(passIdOrToken, defaultEventId: eventId);
+    final targetPassId = tokenPayload.passId;
+    final targetName = fullName ?? tokenPayload.fullName;
+
+    if (!isMachineNovaLiveEnabled) {
+      final localRes = await LocalStorageService.instance.checkInGuest(
+        eventId,
+        passIdOrToken,
+        operatorId: operatorId,
+        fullName: targetName,
+      );
+      return CheckInResult(
+        success: localRes.success,
+        message: localRes.message,
+        guest: localRes.guest,
+      );
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/$eventId/checkin');
       final response = await http
@@ -350,9 +407,9 @@ class ApiService {
             uri,
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
-              'passId': passId,
+              'passId': targetPassId,
               'operatorId': operatorId ?? 'mobile-app',
-              'fullName': fullName,
+              'fullName': targetName,
             }),
           )
           .timeout(const Duration(seconds: 5));
@@ -361,99 +418,130 @@ class ApiService {
         final data = jsonDecode(response.body);
         final result = CheckInResult.fromJson(data);
 
-        // Update local memory cache
-        if (result.success && result.guest != null) {
-          final guests = _cachedGuests[eventId];
-          if (guests != null) {
-            final idx = guests.indexWhere((g) => g.passId == passId);
-            if (idx != -1) {
-              guests[idx] = result.guest!;
-            } else {
-              guests.insert(0, result.guest!);
-            }
-          }
-        }
+        // Mirror check-in to local persistent storage
+        await LocalStorageService.instance.checkInGuest(
+          eventId,
+          passIdOrToken,
+          operatorId: operatorId,
+          fullName: targetName,
+        );
         return result;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] checkInGuest 401/403 auth error, committing locally.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] checkInGuest fallback: $e');
+      debugPrint('[API_SERVICE] checkInGuest network error, committing locally: $e');
     }
 
-    // Local fallback update
-    final guests = _cachedGuests[eventId] ?? MockData.guests;
-    try {
-      final g = guests.firstWhere((it) => it.passId == passId);
-      final updated = g.copyWith(
-        status: GuestCheckInStatus.checkedIn,
-        checkInTime: '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      );
-      final idx = guests.indexOf(g);
-      if (idx != -1) guests[idx] = updated;
-      return CheckInResult(
-        success: true,
-        message: 'Successfully checked in ${updated.fullName}',
-        guest: updated,
-      );
-    } catch (_) {
-      final newGuest = GuestModel(
-        id: 'g-${DateTime.now().millisecondsSinceEpoch}',
-        passId: passId,
-        fullName: fullName ?? 'Guest #$passId',
-        email: '',
-        tableNumber: '01',
-        tableName: 'Main Seating',
-        status: GuestCheckInStatus.checkedIn,
-        checkInTime: '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      );
-      return CheckInResult(
-        success: true,
-        message: 'Successfully checked in ${newGuest.fullName}',
-        guest: newGuest,
-      );
-    }
+    final localRes = await LocalStorageService.instance.checkInGuest(
+      eventId,
+      passIdOrToken,
+      operatorId: operatorId,
+      fullName: targetName,
+    );
+    return CheckInResult(
+      success: localRes.success,
+      message: localRes.message,
+      guest: localRes.guest,
+    );
   }
 
-  Future<bool> undoCheckIn(String eventId, String passId) async {
+  /// Comprehensive QR Scan verification and check-in pipeline
+  Future<VerificationResult> verifyAndCheckIn(
+    String eventId,
+    String passIdOrToken, {
+    String? operatorId,
+    String? fullName,
+  }) async {
+    // In local mode (default), execute directly against persistent storage engine
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.verifyAndCheckIn(eventId, passIdOrToken);
+    }
+
+    try {
+      final scan = await verifyScan(eventId, passIdOrToken);
+      if (!scan.canCheckIn) {
+        if (scan.outsideJurisdiction || scan.status == 'wrong_event') {
+          return VerificationResult(
+            type: CheckInVerificationType.wrongEvent,
+            message: scan.message,
+            guest: scan.guest,
+            isCryptographicallyVerified: true,
+          );
+        }
+        if (scan.status == 'already_checked_in') {
+          return VerificationResult(
+            type: CheckInVerificationType.duplicate,
+            message: scan.message,
+            guest: scan.guest,
+            previousCheckInTime: scan.guest?.checkInTime,
+          );
+        }
+        return VerificationResult(
+          type: CheckInVerificationType.invalidPayload,
+          message: scan.message,
+          guest: scan.guest,
+        );
+      }
+
+      final checkIn = await checkInGuest(
+        eventId,
+        passIdOrToken,
+        operatorId: operatorId,
+        fullName: fullName,
+      );
+
+      if (checkIn.success) {
+        return VerificationResult(
+          type: CheckInVerificationType.valid,
+          message: checkIn.message,
+          guest: checkIn.guest,
+          isCryptographicallyVerified: true,
+        );
+      } else {
+        return VerificationResult(
+          type: CheckInVerificationType.duplicate,
+          message: checkIn.message,
+          guest: checkIn.guest,
+          previousCheckInTime: checkIn.guest?.checkInTime,
+        );
+      }
+    } catch (e) {
+      debugPrint('[API_SERVICE] verifyAndCheckIn live fallback to local engine: $e');
+    }
+
+    return LocalStorageService.instance.verifyAndCheckIn(eventId, passIdOrToken);
+  }
+
+  Future<bool> undoCheckIn(String eventId, String passIdOrToken) async {
+    final tokenPayload = PassTokenService.decodeToken(passIdOrToken, defaultEventId: eventId);
+    final targetPassId = tokenPayload.passId;
+
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.undoCheckIn(eventId, targetPassId);
+    }
+
     try {
       final uri = Uri.parse('$baseUrl/events/$eventId/undo-checkin');
       final response = await http
           .post(
             uri,
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'passId': passId}),
+            body: jsonEncode({'passId': targetPassId}),
           )
           .timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
-        _revertLocalCheckIn(eventId, passId);
+        await LocalStorageService.instance.undoCheckIn(eventId, targetPassId);
         return true;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] undoCheckIn 401/403 auth error, reverting locally.');
       }
     } catch (e) {
-      debugPrint('[API_SERVICE] undoCheckIn fallback: $e');
+      debugPrint('[API_SERVICE] undoCheckIn network error: $e');
     }
 
-    _revertLocalCheckIn(eventId, passId);
-    return true;
-  }
-
-  void _revertLocalCheckIn(String eventId, String passId) {
-    final list = _cachedGuests[eventId];
-    if (list != null) {
-      final idx = list.indexWhere((g) => g.passId == passId);
-      if (idx != -1) {
-        list[idx] = list[idx].copyWith(
-          status: GuestCheckInStatus.notArrived,
-          checkInTime: null,
-        );
-      }
-    }
-    final evIdx = _cachedEvents.indexWhere((e) => e.id == eventId);
-    if (evIdx != -1) {
-      final ev = _cachedEvents[evIdx];
-      if (ev.checkedIn > 0) {
-        _cachedEvents[evIdx] = ev.copyWith(checkedIn: ev.checkedIn - 1);
-      }
-    }
+    return LocalStorageService.instance.undoCheckIn(eventId, targetPassId);
   }
 
   Future<Map<String, dynamic>?> getEventStats(String eventId) async {
@@ -467,6 +555,158 @@ class ApiService {
     } catch (e) {
       debugPrint('[API_SERVICE] getEventStats fallback: $e');
     }
+
+    final ev = await LocalStorageService.instance.getEvent(eventId);
+    if (ev != null) {
+      return {
+        'totalCheckins': ev.checkedIn,
+        'passesIssued': ev.passesIssued,
+        'totalCapacity': ev.totalCapacity,
+        'remaining': ev.expected,
+      };
+    }
     return null;
+  }
+
+  // --- USER PROFILE & SYSTEM DIAGNOSTICS ---
+
+  Future<FullProfileData?> getProfile({bool forceRefresh = false}) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.getProfile();
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/auth/profile');
+      final response = await http.get(uri).timeout(const Duration(seconds: 4));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _isBackendReachable = true;
+        return FullProfileData.fromJson(data);
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] getProfile 401/403, loading local profile.');
+      }
+    } catch (e) {
+      debugPrint('[API_SERVICE] getProfile error: $e');
+    }
+
+    return LocalStorageService.instance.getProfile();
+  }
+
+  Future<UserProfileModel?> updateProfile({
+    String? fullName,
+    String? email,
+    String? role,
+    String? organization,
+    String? phone,
+    String? avatarUrl,
+    String? bio,
+    String? scannerSpeed,
+    bool? hapticFeedback,
+  }) async {
+    if (!isMachineNovaLiveEnabled) {
+      return LocalStorageService.instance.updateProfile(
+        fullName: fullName,
+        email: email,
+        role: role,
+        organization: organization,
+        phone: phone,
+        avatarUrl: avatarUrl,
+        bio: bio,
+        scannerSpeed: scannerSpeed,
+        hapticFeedback: hapticFeedback,
+      );
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/auth/profile');
+      final payload = <String, dynamic>{};
+      if (fullName != null) payload['fullName'] = fullName;
+      if (email != null) payload['email'] = email;
+      if (role != null) payload['role'] = role;
+      if (organization != null) payload['organization'] = organization;
+      if (phone != null) payload['phone'] = phone;
+      if (avatarUrl != null) payload['avatarUrl'] = avatarUrl;
+      if (bio != null) payload['bio'] = bio;
+      if (scannerSpeed != null) payload['scannerSpeed'] = scannerSpeed;
+      if (hapticFeedback != null) payload['hapticFeedback'] = hapticFeedback;
+
+      final response = await http
+          .put(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final updated = UserProfileModel.fromJson(data['profile']);
+        await LocalStorageService.instance.updateProfile(
+          fullName: updated.fullName,
+          email: updated.email,
+          role: updated.role,
+          organization: updated.organization,
+          phone: updated.phone,
+          avatarUrl: updated.avatarUrl,
+          bio: updated.bio,
+          scannerSpeed: updated.scannerSpeed,
+          hapticFeedback: updated.hapticFeedback,
+        );
+        return updated;
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        debugPrint('[API_SERVICE] updateProfile 401/403, saving to local persistent engine.');
+      }
+    } catch (e) {
+      debugPrint('[API_SERVICE] updateProfile error: $e');
+    }
+
+    return LocalStorageService.instance.updateProfile(
+      fullName: fullName,
+      email: email,
+      role: role,
+      organization: organization,
+      phone: phone,
+      avatarUrl: avatarUrl,
+      bio: bio,
+      scannerSpeed: scannerSpeed,
+      hapticFeedback: hapticFeedback,
+    );
+  }
+
+  Future<bool> flushSyncQueue() async {
+    try {
+      final uri = Uri.parse('$baseUrl/sync/flush');
+      final response = await http.post(uri).timeout(const Duration(seconds: 6));
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[API_SERVICE] flushSyncQueue error: $e');
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getSystemDiagnostics() async {
+    try {
+      final uri = Uri.parse('$baseUrl/auth/status');
+      final stopwatch = Stopwatch()..start();
+      final response = await http.get(uri).timeout(const Duration(seconds: 4));
+      stopwatch.stop();
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        data['latencyMs'] = stopwatch.elapsedMilliseconds;
+        return data;
+      }
+    } catch (e) {
+      debugPrint('[API_SERVICE] getSystemDiagnostics error: $e');
+    }
+
+    return {
+      'status': 'ok',
+      'mode': isMachineNovaLiveEnabled ? 'machinenova_live' : 'local_storage',
+      'useMachineNovaLive': isMachineNovaLiveEnabled,
+      'latencyMs': 0,
+      'storage': 'SharedPreferences Persistent Engine',
+      'message': 'Local standalone engine active with zero external API dependencies.',
+    };
   }
 }

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../services/api_service.dart';
+import '../services/media_helper.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/location_picker_modal.dart';
 
 class EditEventScreen extends StatefulWidget {
   final EventModel event;
@@ -23,13 +25,90 @@ class _EditEventScreenState extends State<EditEventScreen> {
   late final TextEditingController _tablesController;
   late final TextEditingController _seatsController;
 
+  String? _bannerImagePath;
+  late DateTime _selectedDate;
+  late TimeOfDay _startTime;
+  late TimeOfDay _endTime;
+  double? _latitude;
+  double? _longitude;
+  String? _formattedAddress;
+  String? _city;
+  late bool _isFeatured;
+
+  String _formatDate(DateTime d) {
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
+  String _formatTime(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+        _dateController.text = _formatDate(picked);
+      });
+    }
+  }
+
+  Future<void> _pickStartTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _startTime,
+    );
+    if (picked != null) {
+      setState(() {
+        _startTime = picked;
+        _startTimeController.text = _formatTime(picked);
+      });
+    }
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _endTime,
+    );
+    if (picked != null) {
+      setState(() {
+        _endTime = picked;
+        _endTimeController.text = _formatTime(picked);
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _isFeatured = widget.event.isFeatured;
+    _selectedDate = widget.event.date;
+    final startParts = widget.event.startTime.split(':');
+    _startTime = TimeOfDay(
+      hour: int.tryParse(startParts[0]) ?? 18,
+      minute: startParts.length > 1 ? (int.tryParse(startParts[1]) ?? 0) : 0,
+    );
+    final endParts = widget.event.endTime.split(':');
+    _endTime = TimeOfDay(
+      hour: int.tryParse(endParts[0]) ?? 22,
+      minute: endParts.length > 1 ? (int.tryParse(endParts[1]) ?? 0) : 0,
+    );
     _nameController = TextEditingController(text: widget.event.name);
     _descriptionController =
         TextEditingController(text: widget.event.description);
-    _dateController = TextEditingController(text: widget.event.dateFormatted.split(', ').skip(1).join(', '));
+    _dateController = TextEditingController(text: _formatDate(widget.event.date));
     _startTimeController =
         TextEditingController(text: widget.event.startTime);
     _endTimeController = TextEditingController(text: widget.event.endTime);
@@ -38,6 +117,12 @@ class _EditEventScreenState extends State<EditEventScreen> {
         TextEditingController(text: '${widget.event.tables}');
     _seatsController =
         TextEditingController(text: '${widget.event.seatsPerTable}');
+
+    _bannerImagePath = widget.event.imageUrl;
+    _latitude = widget.event.latitude ?? -1.286389;
+    _longitude = widget.event.longitude ?? 36.817223;
+    _formattedAddress = widget.event.venueAddress;
+    _city = widget.event.city ?? 'Nairobi';
   }
 
   @override
@@ -190,30 +275,30 @@ class _EditEventScreenState extends State<EditEventScreen> {
                     const SizedBox(height: 10),
                     Stack(
                       children: [
-                        Container(
-                          width: double.infinity,
-                          height: 160,
-                          decoration: BoxDecoration(
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: SafeNetworkImage(
+                            imageUrl: _bannerImagePath ?? event.imageUrl,
+                            width: double.infinity,
+                            height: 160,
                             borderRadius: BorderRadius.circular(12),
-                            color: isDark
-                                ? const Color(0xFF1E212D)
-                                : AppTheme.draftGrayBg,
-                            border: isDark
-                                ? Border.all(color: AppTheme.darkCardBorder)
-                                : null,
-                            image: DecorationImage(
-                              image: NetworkImage(
-                                event.imageUrl ??
-                                    'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800&fit=crop',
-                              ),
-                              fit: BoxFit.cover,
-                            ),
+                            fit: BoxFit.cover,
                           ),
                         ),
                         Positioned(
                           right: 8,
                           bottom: 8,
-                          child: Container(
+                          child: GestureDetector(
+                            onTap: () async {
+                              final path = await MediaHelper.pickAndCropImage(
+                                context,
+                                cropType: CropPresetType.eventBanner,
+                              );
+                              if (path != null) {
+                                setState(() => _bannerImagePath = path);
+                              }
+                            },
+                            child: Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
                               vertical: 6,
@@ -261,7 +346,8 @@ class _EditEventScreenState extends State<EditEventScreen> {
                             ),
                           ),
                         ),
-                      ],
+                      ),
+                    ],
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -331,22 +417,28 @@ class _EditEventScreenState extends State<EditEventScreen> {
                           ),
                     ),
                     const SizedBox(height: 8),
-                    TextField(
-                      controller: _dateController,
-                      readOnly: true,
-                      style: TextStyle(
-                        color: isDark
-                            ? AppTheme.darkTextPrimary
-                            : AppTheme.textPrimary,
-                        fontSize: 14,
-                      ),
-                      decoration: InputDecoration(
-                        suffixIcon: Icon(
-                          Icons.calendar_today_outlined,
-                          size: 18,
-                          color: isDark
-                              ? AppTheme.darkTextSecondary
-                              : AppTheme.textSecondary,
+                    InkWell(
+                      onTap: _pickDate,
+                      borderRadius: BorderRadius.circular(10),
+                      child: IgnorePointer(
+                        child: TextField(
+                          controller: _dateController,
+                          readOnly: true,
+                          style: TextStyle(
+                            color: isDark
+                                ? AppTheme.darkTextPrimary
+                                : AppTheme.textPrimary,
+                            fontSize: 14,
+                          ),
+                          decoration: InputDecoration(
+                            suffixIcon: Icon(
+                              Icons.calendar_today_outlined,
+                              size: 18,
+                              color: isDark
+                                  ? AppTheme.accentLime
+                                  : AppTheme.primaryPurple,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -371,22 +463,28 @@ class _EditEventScreenState extends State<EditEventScreen> {
                                     ),
                               ),
                               const SizedBox(height: 8),
-                              TextField(
-                                controller: _startTimeController,
-                                readOnly: true,
-                                style: TextStyle(
-                                  color: isDark
-                                      ? AppTheme.darkTextPrimary
-                                      : AppTheme.textPrimary,
-                                  fontSize: 14,
-                                ),
-                                decoration: InputDecoration(
-                                  suffixIcon: Icon(
-                                    Icons.access_time,
-                                    size: 18,
-                                    color: isDark
-                                        ? AppTheme.darkTextSecondary
-                                        : AppTheme.textSecondary,
+                              InkWell(
+                                onTap: _pickStartTime,
+                                borderRadius: BorderRadius.circular(10),
+                                child: IgnorePointer(
+                                  child: TextField(
+                                    controller: _startTimeController,
+                                    readOnly: true,
+                                    style: TextStyle(
+                                      color: isDark
+                                          ? AppTheme.darkTextPrimary
+                                          : AppTheme.textPrimary,
+                                      fontSize: 14,
+                                    ),
+                                    decoration: InputDecoration(
+                                      suffixIcon: Icon(
+                                        Icons.access_time,
+                                        size: 18,
+                                        color: isDark
+                                            ? AppTheme.accentLime
+                                            : AppTheme.primaryPurple,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -411,22 +509,28 @@ class _EditEventScreenState extends State<EditEventScreen> {
                                     ),
                               ),
                               const SizedBox(height: 8),
-                              TextField(
-                                controller: _endTimeController,
-                                readOnly: true,
-                                style: TextStyle(
-                                  color: isDark
-                                      ? AppTheme.darkTextPrimary
-                                      : AppTheme.textPrimary,
-                                  fontSize: 14,
-                                ),
-                                decoration: InputDecoration(
-                                  suffixIcon: Icon(
-                                    Icons.access_time,
-                                    size: 18,
-                                    color: isDark
-                                        ? AppTheme.darkTextSecondary
-                                        : AppTheme.textSecondary,
+                              InkWell(
+                                onTap: _pickEndTime,
+                                borderRadius: BorderRadius.circular(10),
+                                child: IgnorePointer(
+                                  child: TextField(
+                                    controller: _endTimeController,
+                                    readOnly: true,
+                                    style: TextStyle(
+                                      color: isDark
+                                          ? AppTheme.darkTextPrimary
+                                          : AppTheme.textPrimary,
+                                      fontSize: 14,
+                                    ),
+                                    decoration: InputDecoration(
+                                      suffixIcon: Icon(
+                                        Icons.access_time,
+                                        size: 18,
+                                        color: isDark
+                                            ? AppTheme.accentLime
+                                            : AppTheme.primaryPurple,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -456,23 +560,56 @@ class _EditEventScreenState extends State<EditEventScreen> {
                         fontSize: 14,
                       ),
                       decoration: InputDecoration(
-                        suffixIcon: Icon(
-                          Icons.location_on_outlined,
-                          size: 18,
-                          color: isDark
-                              ? AppTheme.darkTextSecondary
-                              : AppTheme.textSecondary,
+                        hintText: 'Enter venue or pick on map',
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            Icons.map_outlined,
+                            size: 20,
+                            color: isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                          ),
+                          tooltip: 'Pick location on map',
+                          onPressed: () async {
+                            final result = await LocationPickerModal.show(
+                              context,
+                              initialLatitude: _latitude,
+                              initialLongitude: _longitude,
+                              initialAddress: _venueController.text,
+                            );
+                            if (result != null) {
+                              setState(() {
+                                _venueController.text = result.address;
+                                _latitude = result.latitude;
+                                _longitude = result.longitude;
+                                _formattedAddress = result.address;
+                                if (result.city != null && result.city!.isNotEmpty) {
+                                  _city = result.city;
+                                }
+                              });
+                            }
+                          },
                         ),
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      '${event.venueAddress} · Doors open at ${event.doorsOpenTime}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: isDark
-                                ? AppTheme.darkTextTertiary
-                                : AppTheme.textSecondary,
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.pin_drop_outlined,
+                          size: 13,
+                          color: isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${_formattedAddress ?? widget.event.venueAddress} · (${_latitude?.toStringAsFixed(4) ?? "-1.2864"}, ${_longitude?.toStringAsFixed(4) ?? "36.8172"})',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: isDark
+                                      ? AppTheme.darkTextTertiary
+                                      : AppTheme.textSecondary,
+                                ),
                           ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 28),
 
@@ -552,6 +689,60 @@ class _EditEventScreenState extends State<EditEventScreen> {
                       subtext:
                           '${event.passesIssued} issued · ${_totalSeats - event.passesIssued} still available',
                     ),
+                    const SizedBox(height: 20),
+
+                    // Featured Event Switch
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _isFeatured
+                              ? AppTheme.accentLime.withAlpha(160)
+                              : (isDark ? AppTheme.darkCardBorder : AppTheme.borderLight),
+                          width: _isFeatured ? 1.5 : 1.0,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Featured Event',
+                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                        color: isDark
+                                            ? AppTheme.darkTextPrimary
+                                            : AppTheme.textPrimary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Showcase in the rotating featured banner on Home',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: isDark
+                                            ? AppTheme.darkTextSecondary
+                                            : AppTheme.textSecondary,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch.adaptive(
+                            value: _isFeatured,
+                            activeTrackColor: AppTheme.accentLime,
+                            onChanged: (val) {
+                              setState(() {
+                                _isFeatured = val;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     Text(
                       'Capacity cannot be lower than ${event.passesIssued} issued passes. Existing guest and table assignments stay unchanged.',
@@ -622,6 +813,16 @@ class _EditEventScreenState extends State<EditEventScreen> {
                           tables: tables,
                           seatsPerTable: seats,
                           totalCapacity: tables * seats,
+                          imageUrl: _bannerImagePath ?? widget.event.imageUrl,
+                          latitude: _latitude ?? widget.event.latitude,
+                          longitude: _longitude ?? widget.event.longitude,
+                          venueAddress: _formattedAddress ??
+                              (_venueController.text.trim().isNotEmpty
+                                  ? _venueController.text.trim()
+                                  : widget.event.venueAddress),
+                          city: _city ?? widget.event.city,
+                          date: _selectedDate,
+                          isFeatured: _isFeatured,
                         );
 
                         final saved = await ApiService.instance.updateEvent(updated);

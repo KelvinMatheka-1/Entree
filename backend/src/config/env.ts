@@ -19,6 +19,7 @@ export const config = {
 
   // MachineNova Upstream Settings
   machinenova: {
+    useMachineNovaLive: process.env.USE_MACHINENOVA_LIVE === 'true',
     baseUrl: process.env.MACHINENOVA_BASE_URL || 'https://checkin-backend.machinenova.com',
     frontendUrl: process.env.MACHINENOVA_FRONTEND_URL || 'https://checkin.machinenova.com',
     orgSlug: process.env.MACHINENOVA_ORG_SLUG || '',

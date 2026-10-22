@@ -29,6 +29,7 @@ class MockData {
           'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=1000&fit=crop',
       attendeeAvatars: attendeeAvatars,
       city: 'London',
+      isFeatured: true,
     ),
     EventModel(
       id: 'evt-002',
@@ -54,6 +55,7 @@ class MockData {
           'https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=1000&fit=crop',
       attendeeAvatars: attendeeAvatars,
       city: 'London',
+      isFeatured: true,
     ),
     EventModel(
       id: 'evt-003',

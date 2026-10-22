@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AppTheme {
   // Primary Colors — Monochrome Black
@@ -18,20 +19,50 @@ class AppTheme {
   static const Color accentLimeDark = Color(0xFF4D7C0F);
 
   // Theme Mode Controller & Helpers
+  // Defaults to ThemeMode.system so the app follows the user's OS setting.
   static final ValueNotifier<ThemeMode> themeMode =
-      ValueNotifier<ThemeMode>(ThemeMode.light);
+      ValueNotifier<ThemeMode>(ThemeMode.system);
+
+  static const String _kThemeModeKey = 'entree_theme_mode_v1';
+
+  static Future<void> initTheme() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_kThemeModeKey);
+      if (saved == 'dark') {
+        themeMode.value = ThemeMode.dark;
+      } else if (saved == 'light') {
+        themeMode.value = ThemeMode.light;
+      } else {
+        themeMode.value = ThemeMode.system;
+      }
+    } catch (e) {
+      debugPrint('[APP_THEME] Error loading persisted theme mode: $e');
+    }
+  }
 
   static bool isDark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;
 
   static void setThemeMode(ThemeMode mode) {
     themeMode.value = mode;
+    SharedPreferences.getInstance().then((prefs) {
+      final str = switch (mode) {
+        ThemeMode.dark => 'dark',
+        ThemeMode.light => 'light',
+        ThemeMode.system => 'system',
+      };
+      prefs.setString(_kThemeModeKey, str);
+    }).catchError((e) {
+      debugPrint('[APP_THEME] Error saving theme mode: $e');
+    });
   }
 
-  static void toggleTheme() {
-    themeMode.value = themeMode.value == ThemeMode.light
-        ? ThemeMode.dark
-        : ThemeMode.light;
+  static void toggleTheme([BuildContext? context]) {
+    final bool currentIsDark = context != null
+        ? Theme.of(context).brightness == Brightness.dark
+        : themeMode.value == ThemeMode.dark;
+    setThemeMode(currentIsDark ? ThemeMode.light : ThemeMode.dark);
   }
 
   // Legacy alias so existing code doesn't break during migration

@@ -1,38 +1,22 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
+import '../models/user_profile_model.dart';
 import '../data/mock_data.dart';
 import '../services/api_service.dart';
+import '../services/media_helper.dart';
 import '../widgets/common_widgets.dart';
 import 'event_details_screen.dart';
 import 'create_event_screen.dart';
 import 'scan_entry_screen.dart';
 
 Route<T> smoothPageRoute<T>(Widget page) {
-  return PageRouteBuilder<T>(
-    pageBuilder: (context, animation, secondaryAnimation) => page,
-    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0.0, 0.035),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        ),
-      );
-    },
-    transitionDuration: const Duration(milliseconds: 320),
-    reverseTransitionDuration: const Duration(milliseconds: 260),
-  );
+  return MaterialPageRoute<T>(builder: (_) => page);
 }
 
 class HomeScreen extends StatefulWidget {
@@ -102,11 +86,36 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<EventModel> _backendEvents = [];
+  bool _eventsLoaded = false;
+  FullProfileData? _profileData;
+  Timer? _featuredTimer;
+  int _featuredIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadEvents();
+    _startFeaturedTimer();
+    _refreshAllData();
+  }
+
+  void _startFeaturedTimer() {
+    _featuredTimer?.cancel();
+    _featuredTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      final featured = _featuredEvents;
+      if (featured.length > 1) {
+        setState(() {
+          _featuredIndex = (_featuredIndex + 1) % featured.length;
+        });
+      }
+    });
+  }
+
+  Future<void> _refreshAllData() async {
+    await Future.wait([
+      _loadEvents(),
+      _loadProfile(forceRefresh: true),
+    ]);
   }
 
   Future<void> _loadEvents() async {
@@ -114,21 +123,34 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _backendEvents = events;
+        _eventsLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _loadProfile({bool forceRefresh = false}) async {
+    final data = await ApiService.instance.getProfile(forceRefresh: forceRefresh);
+    if (mounted) {
+      setState(() {
+        _profileData = data;
       });
     }
   }
 
   @override
   void dispose() {
+    _featuredTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
   // All events sorted by date ascending
   List<EventModel> get _allSortedEvents {
-    final list = _backendEvents.isNotEmpty
+    final list = _eventsLoaded
         ? List<EventModel>.from(_backendEvents)
-        : List<EventModel>.from(MockData.events);
+        : (_backendEvents.isNotEmpty
+            ? List<EventModel>.from(_backendEvents)
+            : List<EventModel>.from(MockData.events));
     list.sort((a, b) => a.date.compareTo(b.date));
     return list;
   }
@@ -151,13 +173,21 @@ class _HomeScreenState extends State<HomeScreen> {
     return _allSortedEvents.where(_matchesSearch).toList();
   }
 
-  // Featured / Popular events
-  List<EventModel> get _popularEvents {
+  // Featured events: prioritize events marked isFeatured
+  List<EventModel> get _featuredEvents {
+    final explicitlyFeatured = _allSortedEvents
+        .where((e) => e.isFeatured && e.status != EventStatus.past)
+        .where(_matchesSearch)
+        .toList();
+    if (explicitlyFeatured.isNotEmpty) {
+      return explicitlyFeatured;
+    }
     return _allSortedEvents
         .where((e) => e.status != EventStatus.past)
         .where(_matchesSearch)
         .toList();
   }
+
 
   // Upcoming events for vertical list
   List<EventModel> get _upcomingEvents {
@@ -215,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // DISCOVER PAGE (Main Events Page — Matches Reference Design)
   // ---------------------------------------------------------------------------
   Widget _buildDiscoverPage() {
-    final popular = _popularEvents;
+    final featured = _featuredEvents;
     final upcoming = _upcomingEvents;
     final searchResults = _searchResults;
     final isSearching = _searchQuery.trim().isNotEmpty;
@@ -256,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: isDark
-                          ? const Color(0xFF222638)
+                          ? AppTheme.darkSurface
                           : AppTheme.primaryBlack.withValues(alpha: 0.06),
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -331,8 +361,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
         ] else ...[
-          // "Popular Event" Section Header
-          if (popular.isNotEmpty)
+          // "Featured Event" Section Header
+          if (featured.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(hPad, 20, hPad, 12),
@@ -341,7 +371,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Flexible(
                       child: Text(
-                        'Popular Event',
+                        'Featured Event',
                         style: GoogleFonts.inter(
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
@@ -366,12 +396,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // Popular Event Hero Card
-          if (popular.isNotEmpty)
+          // Featured Event Rotating Card (subtle fade blur every 4s)
+          if (featured.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: hPad),
-                child: _buildHeroEventCard(popular.first),
+                child: _buildRotatingFeaturedCard(featured),
               ),
             ),
 
@@ -395,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   Text(
-                    '${upcoming.length} available',
+                    '${upcoming.length} scheduled',
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
@@ -409,24 +439,36 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // "Upcoming Events" Vertical Scrollable List (matches screenshot layout)
+          // "Upcoming Events" Vertical Scrollable List (normal up-down scroll within bounded box)
           if (upcoming.isEmpty)
             SliverToBoxAdapter(
               child: _buildEmptyUpcomingEvents(),
             )
           else
-            SliverPadding(
-              padding: EdgeInsets.symmetric(horizontal: hPad),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final event = upcoming[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildUpcomingDiscoveryCard(event, isDark),
-                    );
-                  },
-                  childCount: upcoming.length,
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: hPad),
+                child: SizedBox(
+                  height: upcoming.length == 1
+                      ? 140
+                      : upcoming.length == 2
+                          ? 276
+                          : 395,
+                  child: ScrollConfiguration(
+                    behavior: const _NoScrollbarBehavior(),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      primary: false,
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: upcoming.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final event = upcoming[index];
+                        return _buildUpcomingDiscoveryCard(event, isDark);
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -438,230 +480,201 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // HEADER — "Find events in London" with dark icon buttons
+  // HEADER — "Host Portal" with dark icon buttons
   // ---------------------------------------------------------------------------
   Widget _buildHeader(double hPad) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: EdgeInsets.fromLTRB(hPad, 16, hPad, 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          // Left: "Find events in" + City
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Find events in',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: isDark
-                            ? AppTheme.darkTextSecondary
-                            : AppTheme.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                      color: isDark
-                          ? AppTheme.darkTextSecondary
-                          : AppTheme.textSecondary,
+          // Left: City name, Right: App Logo
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Nairobi',
+                style: TextStyle(
+                  fontFamily: 'Amsterdam Four',
+                  fontFamilyFallback: const ['AmsterdamFour', 'Amsterdam Four_ttf'],
+                  fontSize: 30,
+                  fontWeight: FontWeight.w400,
+                  height: 1.1,
+                  color: isDark
+                      ? AppTheme.darkTextPrimary
+                      : AppTheme.textPrimary,
+                ),
+              ),
+              // Right: Entrée App Logo
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.black : Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.15)
+                        : AppTheme.borderLight,
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                Text(
-                  'Nairobi',
-                  style: GoogleFonts.inter(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: isDark
-                        ? AppTheme.darkTextPrimary
-                        : AppTheme.textPrimary,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Right: Notifications dark circle button with lime green indicator dot (Chat button removed)
-          _buildDarkCircleButton(
-            Icons.notifications_none_rounded,
-            hasBadge: true,
-            badgeColor: const Color(0xFFEF4444),
-            onTap: () {},
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDarkCircleButton(
-    IconData icon, {
-    required VoidCallback onTap,
-    double size = 42,
-    bool hasBadge = false,
-    Color? badgeColor,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return GestureDetector(
-      onTap: onTap,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          GlassContainer(
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            blur: 16,
-            color: isDark
-                ? const Color(0xFF1E1E1E).withValues(alpha: 0.70)
-                : AppTheme.primaryBlack.withValues(alpha: 0.82),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.16),
-              width: 1,
-            ),
-            child: Center(
-              child: Icon(icon, color: Colors.white, size: 19),
-            ),
-          ),
-          if (hasBadge)
-            Positioned(
-              top: 2,
-              right: 2,
-              child: Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: badgeColor ?? const Color(0xFFEF4444),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color:
-                        isDark ? const Color(0xFF1E1E1E) : AppTheme.primaryBlack,
-                    width: 1.5,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: Padding(
+                    padding: const EdgeInsets.all(5),
+                    child: Image.asset(
+                      isDark
+                          ? 'assets/images/app_logo_cropped.png'
+                          : 'assets/images/app_logo_light_cropped.png',
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
               ),
+            ],
+          ),
+          // True horizontal & vertical center: Host Portal label
+          Center(
+            child: Text(
+              'Host Portal',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.3,
+                color: isDark
+                    ? AppTheme.darkTextTertiary
+                    : AppTheme.textTertiary,
+              ),
             ),
+          ),
         ],
       ),
     );
   }
 
   // ---------------------------------------------------------------------------
-  // SEARCH BAR — Rounded pill with dark filter button
+  // SEARCH BAR — Rounded full-width pill dominating search area
   // ---------------------------------------------------------------------------
   Widget _buildSearchBar(double hPad) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 4),
-      child: Row(
-        children: [
-          // Search field
-          Expanded(
-            child: Container(
-              height: 50,
-              decoration: BoxDecoration(
-                color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
-                borderRadius: BorderRadius.circular(25),
-                border: Border.all(
-                  color:
-                      isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: _searchController,
-                style: GoogleFonts.inter(
-                  color:
-                      isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
-                  fontSize: 14,
-                ),
-                cursorColor: isDark ? Colors.white : AppTheme.primaryBlack,
-                decoration: InputDecoration(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
-                  hintText: 'Search',
-                  hintStyle: GoogleFonts.inter(
-                    color: isDark
-                        ? AppTheme.darkTextTertiary
-                        : AppTheme.textTertiary,
-                    fontSize: 14,
-                  ),
-                  prefixIcon: Icon(
-                    Icons.search,
-                    color: isDark
-                        ? AppTheme.darkTextTertiary
-                        : AppTheme.textTertiary,
-                    size: 22,
-                  ),
-                  suffixIcon: _searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(
-                            Icons.clear,
-                            color: isDark
-                                ? AppTheme.darkTextSecondary
-                                : AppTheme.textSecondary,
-                            size: 18,
-                          ),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _searchQuery = '');
-                          },
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
-                ),
-                onChanged: (val) => setState(() => _searchQuery = val),
-              ),
-            ),
+      child: Container(
+        height: 50,
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
+          borderRadius: BorderRadius.circular(25),
+          border: Border.all(
+            color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
           ),
-          const SizedBox(width: 10),
-
-          // Dark filter button
-          GestureDetector(
-            onTap: () {},
-            child: Container(
-              width: 50,
-              height: 50,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : AppTheme.primaryBlack,
-                borderRadius: BorderRadius.circular(16),
-                border: isDark
-                    ? Border.all(
-                        color: Colors.white.withValues(alpha: 0.12),
-                        width: 1,
-                      )
-                    : null,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: const Icon(Icons.tune, color: Colors.white, size: 20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
+          ],
+        ),
+        child: TextField(
+          controller: _searchController,
+          style: GoogleFonts.inter(
+            color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+            fontSize: 14,
           ),
-        ],
+          cursorColor: isDark ? Colors.white : AppTheme.primaryBlack,
+          decoration: InputDecoration(
+            contentPadding: const EdgeInsets.symmetric(vertical: 13),
+            hintText: 'Search hosted events or venues...',
+            hintStyle: GoogleFonts.inter(
+              color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+              fontSize: 14,
+            ),
+            prefixIcon: Icon(
+              Icons.search,
+              color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+              size: 22,
+            ),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: Icon(
+                      Icons.clear,
+                      color: isDark
+                          ? AppTheme.darkTextSecondary
+                          : AppTheme.textSecondary,
+                      size: 18,
+                    ),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            filled: false,
+          ),
+          onChanged: (val) => setState(() => _searchQuery = val),
+        ),
       ),
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // ROTATING FEATURED EVENT CARD — 10-second carousel with slow, subtle fade + blur transition (1.2s)
+  // ---------------------------------------------------------------------------
+  Widget _buildRotatingFeaturedCard(List<EventModel> featured) {
+    final currentEvent = featured[_featuredIndex % featured.length];
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 1200),
+      switchInCurve: Curves.easeInOutCubic,
+      switchOutCurve: Curves.easeInOutCubic,
+      layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
+        return Stack(
+          alignment: Alignment.center,
+          children: <Widget>[
+            ...previousChildren,
+            ?currentChild,
+          ],
+        );
+      },
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeInOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: AnimatedBuilder(
+            animation: curved,
+            builder: (context, child) {
+              final blur = (1.0 - curved.value) * 6.0;
+              if (blur <= 0.08) return child!;
+              return ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                child: child,
+              );
+            },
+            child: child,
+          ),
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey<String>(currentEvent.id),
+        child: _buildHeroEventCard(currentEvent),
+      ),
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // HERO EVENT CARD — Large single card with circular date and pill price (matches reference)
@@ -673,10 +686,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.push(
           context,
           smoothPageRoute(EventDetailsScreen(event: event)),
-        ).then((_) => _loadEvents());
+        ).then((_) => _refreshAllData());
       },
       child: Container(
         width: double.infinity,
+        height: 340,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
@@ -691,21 +705,87 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(24),
           child: Stack(
             children: [
-              // Background Image
-              SafeNetworkImage(
-                imageUrl: event.imageUrl,
-                height: 340,
-                width: double.infinity,
-                borderRadius: BorderRadius.circular(24),
+              // 1. Blurred Background Image filling entire 340px container
+              Positioned.fill(
+                child: Container(
+                  height: 340,
+                  color: isDark ? const Color(0xFF121212) : const Color(0xFF222222),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      ImageFiltered(
+                        imageFilter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                        child: Transform.scale(
+                          scale: 1.18,
+                          child: SafeNetworkImage(
+                            imageUrl: event.imageUrl,
+                            fit: BoxFit.cover,
+                            height: 340,
+                            width: double.infinity,
+                          ),
+                        ),
+                      ),
+                      // Ambient tint over the blurred background for contrast
+                      Container(
+                        color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.28),
+                      ),
+                    ],
+                  ),
+                ),
               ),
 
-              // Subtle black fade at the bottom (clean, no blur)
+              // 2. Centered Zoomed-out Foreground Image with softly blended feathered edges
+              Positioned.fill(
+                child: Center(
+                  child: ShaderMask(
+                    shaderCallback: (Rect bounds) {
+                      return const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black,
+                          Colors.black,
+                          Colors.transparent,
+                        ],
+                        stops: [0.0, 0.09, 0.91, 1.0],
+                      ).createShader(bounds);
+                    },
+                    blendMode: BlendMode.dstIn,
+                    child: ShaderMask(
+                      shaderCallback: (Rect bounds) {
+                        return const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black,
+                            Colors.black,
+                            Colors.transparent,
+                          ],
+                          stops: [0.0, 0.05, 0.95, 1.0],
+                        ).createShader(bounds);
+                      },
+                      blendMode: BlendMode.dstIn,
+                      child: SafeNetworkImage(
+                        imageUrl: event.imageUrl,
+                        height: 340,
+                        width: double.infinity,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 3. Subtle black fade at the bottom for text readability
               Positioned(
                 left: 0,
                 right: 0,
                 bottom: 0,
                 child: Container(
-                  height: 155,
+                  height: 160,
                   decoration: BoxDecoration(
                     borderRadius: const BorderRadius.vertical(
                       bottom: Radius.circular(24),
@@ -716,9 +796,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       colors: [
                         Colors.transparent,
                         Colors.black.withValues(alpha: 0.35),
-                        Colors.black.withValues(alpha: 0.78),
+                        Colors.black.withValues(alpha: 0.82),
                       ],
-                      stops: const [0.0, 0.45, 1.0],
+                      stops: const [0.0, 0.40, 1.0],
                     ),
                   ),
                 ),
@@ -759,7 +839,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${event.passesIssued} Going',
+                        '${event.passesIssued} Guests',
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -770,6 +850,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+
 
               // Bottom: Overlay info bar — curvy capsule pill aligned with circular date badge
               Positioned(
@@ -860,18 +941,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ? AppTheme.darkTextSecondary
                                       : AppTheme.textSecondary,
                                 ),
-                                const SizedBox(width: 3),
+                                const SizedBox(width: 4),
                                 Expanded(
-                                  child: Text(
-                                    '${event.venue}, ${event.cityOrVenue}',
+                                  child: SlidingMarqueeLocation(
+                                    text: '${event.venue}, ${event.cityOrVenue}',
                                     style: GoogleFonts.inter(
                                       fontSize: 11,
                                       color: isDark
                                           ? AppTheme.darkTextSecondary
                                           : AppTheme.textSecondary,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                               ],
@@ -956,10 +1035,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.push(
           context,
           smoothPageRoute(EventDetailsScreen(event: event)),
-        ).then((_) => _loadEvents());
+        ).then((_) => _refreshAllData());
       },
       behavior: HitTestBehavior.opaque,
       child: Container(
+        constraints: const BoxConstraints(minHeight: 128),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF141414) : Colors.white,
           borderRadius: BorderRadius.circular(22),
@@ -977,7 +1057,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -1079,7 +1159,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           : AppTheme.textSecondary,
                       height: 1.35,
                     ),
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 10),
@@ -1109,7 +1189,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       // Host / Attendee text
                       Expanded(
                         child: Text(
-                          '${event.passesIssued} Going',
+                          '${event.passesIssued} Guests',
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -1144,7 +1224,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Navigator.push(
             context,
             smoothPageRoute(EventDetailsScreen(event: event)),
-          ).then((_) => _loadEvents());
+          ).then((_) => _refreshAllData());
         },
         behavior: HitTestBehavior.opaque,
         child: Container(
@@ -1245,7 +1325,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     decoration: BoxDecoration(
                       color: isDark
-                          ? const Color(0xFF222638)
+                          ? AppTheme.darkSurface
                           : const Color(0xFFF1F5F9),
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -1260,7 +1340,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${event.passesIssued} going',
+                    '${event.passesIssued} guests',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       color: isDark
@@ -1277,12 +1357,26 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  bool _isEventPast(EventModel e) {
+    if (e.status == EventStatus.past) return true;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final eventDay = DateTime(e.date.year, e.date.month, e.date.day);
+    return eventDay.isBefore(today);
+  }
+
   // ---------------------------------------------------------------------------
   // CHECK-IN HUB (Bottom Nav Index 1)
   // ---------------------------------------------------------------------------
   Widget _buildCheckInHub() {
     final hPad = _horizontalPadding(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final activeCheckInEvents =
+        _allSortedEvents.where((e) => !_isEventPast(e)).toList();
+    final pastCheckInEvents =
+        _allSortedEvents.where((e) => _isEventPast(e)).toList();
+    final checkInList = [...activeCheckInEvents, ...pastCheckInEvents];
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -1335,16 +1429,18 @@ class _HomeScreenState extends State<HomeScreen> {
           sliver: SliverList(
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                final event = _allSortedEvents[index];
+                final event = checkInList[index];
+                final isPast = _isEventPast(event);
+                final isFirstPast = isPast && index == activeCheckInEvents.length;
                 final hasImage =
                     event.imageUrl != null && event.imageUrl!.isNotEmpty;
 
-                return GestureDetector(
+                Widget cardWidget = GestureDetector(
                   onTap: () {
                     Navigator.push(
                       context,
                       smoothPageRoute(ScanEntryScreen(event: event)),
-                    ).then((_) => _loadEvents());
+                    ).then((_) => _refreshAllData());
                   },
                   behavior: HitTestBehavior.opaque,
                   child: Container(
@@ -1374,14 +1470,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         // Background Event Image positioned across the card
                         if (hasImage)
                           Positioned.fill(
-                            child: Image.network(
-                              event.imageUrl!,
+                            child: SafeNetworkImage(
+                              imageUrl: event.imageUrl,
                               fit: BoxFit.cover,
                               alignment: Alignment.centerRight,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  Container(
-                                color: const Color(0xFF141414),
-                              ),
                             ),
                           ),
 
@@ -1462,7 +1554,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     const SizedBox(height: 8),
 
                                     // Check-in and Status indicators
-                                    Row(
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
                                       children: [
                                         Container(
                                           padding: const EdgeInsets.symmetric(
@@ -1504,8 +1599,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           ),
                                         ),
                                         if (event.status ==
-                                            EventStatus.live) ...[
-                                          const SizedBox(width: 8),
+                                            EventStatus.live)
                                           Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 7,
@@ -1547,8 +1641,34 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 ),
                                               ],
                                             ),
+                                          )
+                                        else if (isPast)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 7,
+                                              vertical: 3.5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white
+                                                  .withValues(alpha: 0.08),
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                              border: Border.all(
+                                                color: Colors.white
+                                                    .withValues(alpha: 0.15),
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              'PAST',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF94A3B8),
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
                                           ),
-                                        ],
                                       ],
                                     ),
                                   ],
@@ -1581,8 +1701,169 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 );
+
+                // ONLY already passed events have the slide to delete feature!
+                if (isPast) {
+                  Widget dismissibleCard = Dismissible(
+                    key: ValueKey<String>('checkin_del_${event.id}'),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      margin: const EdgeInsets.only(bottom: 14),
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.symmetric(horizontal: 22),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.delete_sweep_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Delete',
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    confirmDismiss: (direction) async {
+                      return await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          backgroundColor:
+                              isDark ? AppTheme.darkSurface : Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          title: Text(
+                            'Delete Past Event?',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w700,
+                              color: isDark
+                                  ? AppTheme.darkTextPrimary
+                                  : AppTheme.textPrimary,
+                            ),
+                          ),
+                          content: Text(
+                            'Are you sure you want to delete "${event.name}" and its check-in records?',
+                            style: GoogleFonts.inter(
+                              color: isDark
+                                  ? AppTheme.darkTextSecondary
+                                  : AppTheme.textSecondary,
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: Text(
+                                'Cancel',
+                                style: GoogleFonts.inter(
+                                  color: isDark
+                                      ? AppTheme.darkTextSecondary
+                                      : AppTheme.textSecondary,
+                                ),
+                              ),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFDC2626),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                elevation: 0,
+                              ),
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        ),
+                      ) ??
+                          false;
+                    },
+                    onDismissed: (_) async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      await ApiService.instance.deleteEvent(event.id);
+                      _refreshAllData();
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Deleted past event "${event.name}"',
+                            ),
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
+                    },
+                    child: cardWidget,
+                  );
+
+                  if (isFirstPast) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 18, 4, 12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Past Events',
+                                style: GoogleFonts.inter(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: isDark
+                                      ? AppTheme.darkTextSecondary
+                                      : AppTheme.textSecondary,
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.swipe_left_rounded,
+                                    size: 15,
+                                    color: isDark
+                                        ? AppTheme.darkTextTertiary
+                                        : AppTheme.textTertiary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Slide to delete',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      color: isDark
+                                          ? AppTheme.darkTextTertiary
+                                          : AppTheme.textTertiary,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        dismissibleCard,
+                      ],
+                    );
+                  }
+
+                  return dismissibleCard;
+                }
+
+                // Active events: No slide to delete
+                return cardWidget;
               },
-              childCount: _allSortedEvents.length,
+              childCount: checkInList.length,
             ),
           ),
         ),
@@ -1597,163 +1878,755 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildAccountPage() {
     final hPad = _horizontalPadding(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final profile = _profileData?.profile;
 
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(hPad, 20, hPad, 100),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Profile',
-            style: GoogleFonts.inter(
-              fontSize: 28,
-              fontWeight: FontWeight.w700,
-              color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 20),
+    // Derived dynamic metric values directly from live events list
+    final totalEventsCount = _allSortedEvents.length;
+    final totalCapacityCount =
+        _allSortedEvents.fold<int>(0, (s, e) => s + e.totalCapacity);
+    final totalCheckedInCount =
+        _allSortedEvents.fold<int>(0, (s, e) => s + e.checkedIn);
+    final totalPassesIssued =
+        _allSortedEvents.fold<int>(0, (s, e) => s + e.passesIssued);
+    final checkInRateStr = totalPassesIssued > 0
+        ? '${((totalCheckedInCount / totalPassesIssued) * 100).toStringAsFixed(1)}%'
+        : (totalCapacityCount > 0
+            ? '${((totalCheckedInCount / totalCapacityCount) * 100).toStringAsFixed(1)}%'
+            : '0.0%');
 
-          // User Profile Card
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
+    return RefreshIndicator(
+      onRefresh: () async {
+        await Future.wait([
+          _loadEvents(),
+          _loadProfile(forceRefresh: true),
+        ]);
+      },
+      color: AppTheme.accentLime,
+      backgroundColor: isDark ? AppTheme.darkCard : AppTheme.primaryBlack,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: EdgeInsets.fromLTRB(hPad, 20, hPad, 110),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Profile',
+              style: GoogleFonts.inter(
+                fontSize: 28,
+                fontWeight: FontWeight.w700,
+                color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                letterSpacing: -0.5,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ],
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF262938)
-                        : AppTheme.primaryBlack,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'AL',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+            const SizedBox(height: 20),
+
+            // User Profile Card
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
                     children: [
-                      Text(
-                        'Alex Morgan',
-                        style: GoogleFonts.inter(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: isDark
-                              ? AppTheme.darkTextPrimary
-                              : AppTheme.textPrimary,
-                        ),
+                      // User Avatar with Image or Initials
+                      _buildAvatarImage(
+                        avatarUrl: profile?.avatarUrl,
+                        initials: profile?.initials ?? 'KM',
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Head of Corporate Events',
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: isDark
-                              ? AppTheme.darkTextSecondary
-                              : AppTheme.textSecondary,
-                        ),
-                      ),
-                      Text(
-                        'alex.morgan@entree.corporate',
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          color: isDark
-                              ? AppTheme.darkTextTertiary
-                              : AppTheme.textTertiary,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              profile?.fullName ?? 'Kelvin Matheka',
+                              style: GoogleFonts.inter(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              profile?.role ?? 'Event Owner',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              profile?.organization ?? 'Entrée',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  Divider(
+                    height: 1,
+                    color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.email_outlined,
+                                  size: 13,
+                                  color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    profile?.email ?? 'kelvin@entree.app',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.phone_outlined,
+                                  size: 13,
+                                  color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  profile?.phone ?? '+254 700 000 000',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 12,
+                                    color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Edit Profile Button
+                      OutlinedButton.icon(
+                        onPressed: () => _showEditProfileModal(context),
+                        icon: Icon(
+                          Icons.edit_outlined,
+                          size: 14,
+                          color: isDark ? AppTheme.accentLime : AppTheme.primaryBlack,
+                        ),
+                        label: Text(
+                          'Edit',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? AppTheme.accentLime : AppTheme.primaryBlack,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: isDark
+                                ? AppTheme.accentLime.withValues(alpha: 0.4)
+                                : AppTheme.borderLight,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (profile?.bio != null && profile!.bio!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppTheme.darkSurface : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isDark ? AppTheme.darkCardBorder : const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      child: Text(
+                        profile.bio!,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Statistics Overview (Clean 3-Item Layout)
+            Row(
+              children: [
+                Expanded(
+                  child: _buildMetricTile(
+                    '$totalEventsCount',
+                    'Total Events',
+                    Icons.event_note_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildMetricTile(
+                    '$totalCapacityCount',
+                    'Total Capacity',
+                    Icons.people_outline_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildMetricTile(
+                    checkInRateStr,
+                    'Check-in Rate',
+                    Icons.verified_rounded,
+                    isVibrant: true,
+                  ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 20),
+            const SizedBox(height: 24),
 
-          // Statistics Overview
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricTile(
-                  '${_allSortedEvents.length}',
-                  'Total Events',
-                  Icons.event_note,
+            // Appearance & Display
+            _buildSettingsGroup('Appearance & Display', [
+              _buildThemeModeSelector(isDark),
+            ]),
+            const SizedBox(height: 24),
+
+            // Scanner & Hardware Group
+            _buildSettingsGroup('Scanner & Hardware', [
+              ListTile(
+                leading: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: isDark ? AppTheme.darkSurface : const Color(0xFFF1F5F9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.vibration_outlined,
+                    color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                    size: 19,
+                  ),
+                ),
+                title: Text(
+                  'Haptic Feedback on Check-in',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                  ),
+                ),
+                subtitle: Text(
+                  (profile?.hapticFeedback ?? true) ? 'Enabled' : 'Disabled',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                  ),
+                ),
+                trailing: Switch.adaptive(
+                  value: profile?.hapticFeedback ?? true,
+                  activeThumbColor: AppTheme.primaryBlack,
+                  activeTrackColor: AppTheme.accentLime,
+                  inactiveThumbColor: Colors.white,
+                  inactiveTrackColor: isDark ? AppTheme.darkCardBorder : const Color(0xFFE2E8F0),
+                  onChanged: (val) async {
+                    if (val) HapticFeedback.mediumImpact();
+                    await ApiService.instance.updateProfile(hapticFeedback: val);
+                    if (mounted) {
+                      setState(() {
+                        if (_profileData != null) {
+                          _profileData = _profileData!.copyWith(
+                            profile: _profileData!.profile.copyWith(hapticFeedback: val),
+                          );
+                        }
+                      });
+                    }
+                  },
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricTile(
-                  '520',
-                  'Total Capacity',
-                  Icons.people_outline,
+            ]),
+            const SizedBox(height: 24),
+
+            // Storage Engine & Upstream Setting
+            _buildSettingsGroup('Data & Upstream Engine', [
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                leading: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: ApiService.isMachineNovaLiveEnabled
+                        ? AppTheme.accentLime.withValues(alpha: 0.15)
+                        : (isDark ? Colors.white10 : const Color(0xFFF1F5F9)),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    ApiService.isMachineNovaLiveEnabled ? Icons.cloud_sync_rounded : Icons.save_rounded,
+                    color: ApiService.isMachineNovaLiveEnabled
+                        ? (isDark ? AppTheme.accentLime : AppTheme.primaryPurple)
+                        : (isDark ? Colors.white70 : AppTheme.textSecondary),
+                    size: 20,
+                  ),
+                ),
+                title: Text(
+                  'Live MachineNova API',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                  ),
+                ),
+                subtitle: Text(
+                  ApiService.isMachineNovaLiveEnabled
+                      ? 'Live Upstream Mode (Requires active credentials)'
+                      : 'Local Persistent Mode (SharedPreferences Engine · Default)',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                  ),
+                ),
+                trailing: Switch.adaptive(
+                  value: ApiService.isMachineNovaLiveEnabled,
+                  activeThumbColor: AppTheme.primaryBlack,
+                  activeTrackColor: AppTheme.accentLime,
+                  inactiveThumbColor: Colors.white,
+                  inactiveTrackColor: isDark ? AppTheme.darkCardBorder : const Color(0xFFE2E8F0),
+                  onChanged: (val) async {
+                    await ApiService.setUseMachineNovaLive(val);
+                    await _loadProfile(forceRefresh: true);
+                    await _loadEvents();
+                    if (mounted) {
+                      setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(val
+                              ? 'Live MachineNova mode enabled.'
+                              : 'Local persistent storage active (Zero 3rd-party dependencies).'),
+                          backgroundColor: val ? AppTheme.primaryPurple : AppTheme.accentLime,
+                          duration: const Duration(seconds: 3),
+                        ),
+                      );
+                    }
+                  },
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricTile(
-                  '98.4%',
-                  'Check-in Rate',
-                  Icons.verified_rounded,
-                  isVibrant: true,
-                ),
+              _buildSettingsTile(
+                Icons.storage_rounded,
+                'Storage Engine',
+                'Persistent SharedPreferences + Cryptographic JWT Passes',
+                trailing: const SizedBox.shrink(),
               ),
-            ],
-          ),
-          const SizedBox(height: 24),
+            ]),
+            const SizedBox(height: 24),
 
-          // Light & Dark Mode Option (Directly in Profile Page)
-          _buildSettingsGroup('Appearance & Display', [
-            _buildThemeModeSelector(isDark),
-          ]),
-          const SizedBox(height: 24),
-
-          _buildSettingsGroup('Scanner & Hardware', [
-            _buildSettingsTile(
-              Icons.camera_alt_outlined,
-              'Camera Scanner Speed',
-              'High sensitivity',
-            ),
-            _buildSettingsTile(
-              Icons.vibration_outlined,
-              'Haptic Feedback on Check-in',
-              'Enabled',
-            ),
-          ]),
-        ],
+            // About Entrée
+            _buildSettingsGroup('About', [
+              _buildSettingsTile(
+                Icons.info_outline_rounded,
+                'Entrée Check-in',
+                'Version 1.0.0',
+                trailing: const SizedBox.shrink(),
+              ),
+            ]),
+          ],
+        ),
       ),
     );
   }
+
+  Widget _buildAvatarImage({
+    required String? avatarUrl,
+    required String initials,
+    double size = 58,
+    double fontSize = 21,
+  }) {
+    ImageProvider? imageProvider;
+    if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
+      final trimmed = avatarUrl.trim();
+      if (trimmed.startsWith('assets/')) {
+        imageProvider = AssetImage(trimmed);
+      } else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        imageProvider = NetworkImage(trimmed);
+      } else if (File(trimmed).existsSync()) {
+        imageProvider = FileImage(File(trimmed));
+      }
+    }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const borderWidth = 2.4;
+
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(borderWidth),
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            AppTheme.accentLime,
+            AppTheme.accentLime,
+            Colors.white,
+            Colors.white,
+          ],
+          stops: [0.0, 0.5, 0.5, 1.0],
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: isDark ? AppTheme.darkSurface : AppTheme.accentLime,
+          image: imageProvider != null
+              ? DecorationImage(
+                  image: imageProvider,
+                  fit: BoxFit.cover,
+                )
+              : null,
+        ),
+        alignment: Alignment.center,
+        child: imageProvider == null
+            ? Text(
+                initials,
+                style: GoogleFonts.inter(
+                  color: isDark ? Colors.white : AppTheme.primaryBlack,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              )
+            : null,
+      ),
+    );
+  }
+
+  void _showEditProfileModal(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final current = _profileData?.profile;
+
+    final nameCtrl = TextEditingController(text: current?.fullName ?? 'Kelvin Matheka');
+    final emailCtrl = TextEditingController(text: current?.email ?? 'kelvin@entree.app');
+    final roleCtrl = TextEditingController(text: current?.role ?? 'Event Owner');
+    final orgCtrl = TextEditingController(text: current?.organization ?? 'Entrée');
+    final phoneCtrl = TextEditingController(text: current?.phone ?? '+254 700 000 000');
+    final bioCtrl = TextEditingController(text: current?.bio ?? 'Senior Event Coordinator & Gate Host');
+    String? currentAvatar = current?.avatarUrl;
+    bool isSaving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 30),
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.darkCard : Colors.white,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -2)),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: isDark ? AppTheme.darkCardBorder : const Color(0xFFE2E8F0),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Edit Profile',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Update your profile, bio, and avatar.',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Avatar with Camera Tap Trigger
+                    Center(
+                      child: Stack(
+                        children: [
+                          _buildAvatarImage(
+                            avatarUrl: currentAvatar,
+                            initials: current?.initials ?? 'KM',
+                            size: 80,
+                            fontSize: 28,
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: GestureDetector(
+                              onTap: () async {
+                                final path = await MediaHelper.pickAndCropImage(
+                                  context,
+                                  cropType: CropPresetType.avatar,
+                                );
+                                if (path != null) {
+                                  setModalState(() {
+                                    currentAvatar = path;
+                                  });
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(7),
+                                decoration: BoxDecoration(
+                                  color: isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isDark ? AppTheme.darkCard : Colors.white,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.camera_alt_rounded,
+                                  size: 15,
+                                  color: isDark ? Colors.black : Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Tap camera icon to change photo (1:1 crop)',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    _buildProfileInputField('Full Name', nameCtrl, isDark, Icons.person_outline),
+                    const SizedBox(height: 12),
+                    _buildProfileInputField('Email Address', emailCtrl, isDark, Icons.email_outlined, keyboardType: TextInputType.emailAddress),
+                    const SizedBox(height: 12),
+                    _buildProfileInputField('Job Title / Role', roleCtrl, isDark, Icons.badge_outlined),
+                    const SizedBox(height: 12),
+                    _buildProfileInputField('Organization', orgCtrl, isDark, Icons.business_outlined),
+                    const SizedBox(height: 12),
+                    _buildProfileInputField('Phone Number', phoneCtrl, isDark, Icons.phone_outlined, keyboardType: TextInputType.phone),
+                    const SizedBox(height: 12),
+                    _buildProfileInputField('Bio / Role Notes', bioCtrl, isDark, Icons.edit_note_outlined, maxLines: 3),
+                    const SizedBox(height: 24),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                setModalState(() => isSaving = true);
+                                final updated = await ApiService.instance.updateProfile(
+                                  fullName: nameCtrl.text.trim(),
+                                  email: emailCtrl.text.trim(),
+                                  role: roleCtrl.text.trim(),
+                                  organization: orgCtrl.text.trim(),
+                                  phone: phoneCtrl.text.trim(),
+                                  bio: bioCtrl.text.trim(),
+                                  avatarUrl: currentAvatar,
+                                );
+                                if (context.mounted) {
+                                  Navigator.pop(context);
+                                }
+                                if (mounted && updated != null) {
+                                  setState(() {
+                                    if (_profileData != null) {
+                                      _profileData = _profileData!.copyWith(profile: updated);
+                                    }
+                                  });
+                                  ScaffoldMessenger.of(this.context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const Icon(Icons.check_circle_rounded, color: AppTheme.primaryBlack, size: 18),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Profile updated successfully!',
+                                            style: GoogleFonts.inter(
+                                              fontWeight: FontWeight.w600,
+                                              color: AppTheme.primaryBlack,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      backgroundColor: AppTheme.accentLime,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentLime,
+                          foregroundColor: AppTheme.primaryBlack,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.primaryBlack,
+                                ),
+                              )
+                            : Text(
+                                'Save Profile',
+                                style: GoogleFonts.inter(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildProfileInputField(
+    String label,
+    TextEditingController controller,
+    bool isDark,
+    IconData icon, {
+    TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.darkSurface : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isDark ? AppTheme.darkCardBorder : const Color(0xFFE2E8F0),
+            ),
+          ),
+          child: TextField(
+            controller: controller,
+            keyboardType: keyboardType,
+            maxLines: maxLines,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              border: InputBorder.none,
+              prefixIcon: Icon(
+                icon,
+                size: 18,
+                color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+
 
   Widget _buildThemeModeSelector(bool isDark) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: AppTheme.themeMode,
       builder: (context, currentMode, _) {
-        final isDarkMode = currentMode == ThemeMode.dark;
+        final isDarkMode = currentMode == ThemeMode.dark ||
+            (currentMode == ThemeMode.system && isDark);
+
+        final subtitle = currentMode == ThemeMode.system
+            ? 'System default (${isDark ? 'Dark' : 'Light'})'
+            : (isDarkMode ? 'Dark theme enabled' : 'Light theme enabled');
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1764,7 +2637,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 38,
                 decoration: BoxDecoration(
                   color: isDarkMode
-                      ? const Color(0xFF222638)
+                      ? AppTheme.darkSurface
                       : const Color(0xFFF1F5F9),
                   shape: BoxShape.circle,
                 ),
@@ -1794,9 +2667,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     Text(
-                      isDarkMode
-                          ? 'Dark theme enabled'
-                          : 'Light theme enabled',
+                      subtitle,
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         color: isDark
@@ -1807,16 +2678,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
-              // iOS Adaptive Switch
+              // iOS Adaptive Switch in Electric Lime
               Switch.adaptive(
                 value: isDarkMode,
-                activeThumbColor: Colors.white,
-                activeTrackColor: isDark
-                    ? const Color(0xFF3B82F6)
-                    : AppTheme.primaryBlack,
+                activeThumbColor: AppTheme.primaryBlack,
+                activeTrackColor: AppTheme.accentLime,
                 inactiveThumbColor: Colors.white,
                 inactiveTrackColor: isDark
-                    ? const Color(0xFF333645)
+                    ? AppTheme.darkCardBorder
                     : const Color(0xFFE2E8F0),
                 onChanged: (val) {
                   AppTheme.setThemeMode(
@@ -1838,18 +2707,24 @@ class _HomeScreenState extends State<HomeScreen> {
     bool isVibrant = false,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accentColor = isDark ? AppTheme.accentLime : AppTheme.accentLimeDark;
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.darkCard : AppTheme.surfaceWhite,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
+          color: isVibrant
+              ? AppTheme.accentLime.withValues(alpha: isDark ? 0.35 : 0.6)
+              : (isDark ? AppTheme.darkCardBorder : AppTheme.borderLight),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
+            color: isVibrant
+                ? AppTheme.accentLime.withValues(alpha: isDark ? 0.12 : 0.08)
+                : Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -1859,7 +2734,9 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Icon(
             icon,
-            color: isDark ? AppTheme.darkTextPrimary : AppTheme.primaryBlack,
+            color: isVibrant
+                ? accentColor
+                : (isDark ? AppTheme.darkTextPrimary : AppTheme.primaryBlack),
             size: 20,
           ),
           const SizedBox(height: 6),
@@ -1870,7 +2747,9 @@ class _HomeScreenState extends State<HomeScreen> {
               style: GoogleFonts.inter(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
-                color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                color: isVibrant
+                    ? accentColor
+                    : (isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary),
               ),
             ),
           ),
@@ -1923,19 +2802,34 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSettingsTile(IconData icon, String title, String subtitle) {
+  Widget _buildSettingsTile(
+    IconData icon,
+    String title,
+    String subtitle, {
+    VoidCallback? onTap,
+    Widget? trailing,
+    Color? iconColor,
+  }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      leading: Icon(
-        icon,
-        color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
-        size: 20,
+      leading: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : const Color(0xFFF1F5F9),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          icon,
+          color: iconColor ?? (isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary),
+          size: 19,
+        ),
       ),
       title: Text(
         title,
         style: GoogleFonts.inter(
           fontSize: 14,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
         ),
       ),
@@ -1946,12 +2840,13 @@ class _HomeScreenState extends State<HomeScreen> {
           color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
         ),
       ),
-      trailing: Icon(
-        Icons.chevron_right,
-        color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
-        size: 18,
-      ),
-      onTap: () {},
+      trailing: trailing ??
+          Icon(
+            Icons.chevron_right_rounded,
+            color: isDark ? AppTheme.darkTextTertiary : AppTheme.textTertiary,
+            size: 18,
+          ),
+      onTap: onTap,
     );
   }
 
@@ -1986,7 +2881,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             children: [
               Expanded(
-                  child: _buildDarkNavItem(0, Icons.explore_outlined, 'Discover')),
+                  child: _buildDarkNavItem(0, Icons.explore_outlined, 'Events')),
               Expanded(
                   child:
                       _buildDarkNavItem(1, Icons.qr_code_scanner_rounded, 'Check-in')),
@@ -2150,7 +3045,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Tap any date with an event icon to open event details',
+                  'Manage hosted events and gate check-in schedule',
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     color: isDark
@@ -2233,7 +3128,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
                                   color: isDark
-                                      ? const Color(0xFF222638)
+                                      ? AppTheme.darkSurface
                                       : const Color(0xFFF1F5F9),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
@@ -2340,7 +3235,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   event: dayEvents.first,
                                 ),
                               ),
-                            ).then((_) => _loadEvents());
+                            ).then((_) => _refreshAllData());
                           }
                         },
                         child: Container(
@@ -2508,7 +3403,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Navigator.push(
             context,
             smoothPageRoute(EventDetailsScreen(event: event)),
-          ).then((_) => _loadEvents());
+          ).then((_) => _refreshAllData());
         },
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -2692,7 +3587,7 @@ class _HomeScreenState extends State<HomeScreen> {
           context,
           smoothPageRoute(const CreateEventScreen()),
         );
-        _loadEvents();
+        _refreshAllData();
       },
       child: Container(
         width: 46,
@@ -2725,3 +3620,126 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+class _NoScrollbarBehavior extends ScrollBehavior {
+  const _NoScrollbarBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
+  }
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      };
+}
+
+// ---------------------------------------------------------------------------
+// SLIDING MARQUEE LOCATION TICKER
+// Continuously and slowly slides location text to the left while keeping
+// the location pin intact and fixed on the left.
+// ---------------------------------------------------------------------------
+class SlidingMarqueeLocation extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+
+  const SlidingMarqueeLocation({
+    super.key,
+    required this.text,
+    this.style,
+  });
+
+  @override
+  State<SlidingMarqueeLocation> createState() => _SlidingMarqueeLocationState();
+}
+
+class _SlidingMarqueeLocationState extends State<SlidingMarqueeLocation>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 9),
+    )..repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant SlidingMarqueeLocation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _controller.reset();
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = widget.style ?? const TextStyle(fontSize: 11);
+    const separator = '   ·   ';
+    final token = '${widget.text}$separator';
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textPainter = TextPainter(
+          text: TextSpan(text: token, style: style),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+        )..layout();
+
+        final tokenWidth = textPainter.width;
+        if (tokenWidth <= 0) {
+          return Text(widget.text, style: style, maxLines: 1, overflow: TextOverflow.ellipsis);
+        }
+
+        return SizedBox(
+          height: textPainter.height + 4,
+          child: ClipRect(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                return Transform.translate(
+                  offset: Offset(-_controller.value * tokenWidth, 0),
+                  child: child,
+                );
+              },
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                minHeight: 0,
+                maxHeight: textPainter.height + 4,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(token, style: style, maxLines: 1),
+                    Text(token, style: style, maxLines: 1),
+                    Text(token, style: style, maxLines: 1),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+

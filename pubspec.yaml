@@ -1,6 +1,6 @@
 name: entree_app
 description: "Entrée - Event Check-in Management App"
-publish_to: 'none'
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
@@ -14,6 +14,17 @@ dependencies:
   intl: ^0.19.0
   http: ^1.6.0
   mobile_scanner: ^7.4.2
+  shared_preferences: ^2.5.6
+  qr_flutter: ^4.1.0
+  crypto: ^3.0.7
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  geolocator: ^13.0.2
+  image_picker: ^1.1.2
+  image_cropper: ^9.0.0
+  share_plus: ^10.1.4
+  app_links: ^6.3.3
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
@@ -24,3 +35,13 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+  fonts:
+    - family: Amsterdam Four
+      fonts:
+        - asset: assets/fonts/AmsterdamFour.ttf
+    - family: AmsterdamFour
+      fonts:
+        - asset: assets/fonts/AmsterdamFour.ttf
+    - family: Carrington
+      fonts:
+        - asset: assets/fonts/Carrington.ttf

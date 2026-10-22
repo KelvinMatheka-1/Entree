@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../theme/app_theme.dart';
 import 'home_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -22,29 +23,41 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void initState() {
     super.initState();
+    _prewarmLogo();
 
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2600),
+      duration: const Duration(milliseconds: 3200),
     );
 
+    // GSAP power3.out silky curve
     _fadeAnimation = CurvedAnimation(
       parent: _animController,
-      curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
+      curve: const Interval(0.0, 0.40, curve: Cubic(0.16, 1.0, 0.3, 1.0)),
     );
 
     _scaleAnimation = Tween<double>(begin: 0.94, end: 1.0).animate(
       CurvedAnimation(
         parent: _animController,
-        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+        curve: const Interval(0.0, 0.50, curve: Cubic(0.16, 1.0, 0.3, 1.0)),
       ),
     );
 
-    _animController.forward();
+    // Start animation and auto-navigation ONLY after first frame is presented
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _animController.forward();
+      _autoNavTimer = Timer(const Duration(milliseconds: 3200), () {
+        _navigateToHome();
+      });
+    });
+  }
 
-    // 2.6 seconds auto-load into homepage
-    _autoNavTimer = Timer(const Duration(milliseconds: 2600), () {
-      _navigateToHome();
+  void _prewarmLogo() {
+    // Only precache the official logo so splash animation runs at locked 60/120fps with zero jank
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      precacheImage(const AssetImage('assets/images/app_logo_cropped.png'), context, onError: (e, s) {});
     });
   }
 
@@ -65,49 +78,37 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const HomeScreen(),
+        transitionDuration: const Duration(milliseconds: 440),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final fadeCurve = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeInOutCubic,
-          );
+          // GSAP power3.out fluid motion transition
+          const gsapCurve = Cubic(0.16, 1.0, 0.3, 1.0);
+          final curved = CurvedAnimation(parent: animation, curve: gsapCurve);
+
           return FadeTransition(
-            opacity: fadeCurve,
-            child: child,
+            opacity: curved,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0.0, 0.035),
+                end: Offset.zero,
+              ).animate(curved),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.98, end: 1.0).animate(curved),
+                child: child,
+              ),
+            ),
           );
         },
-        transitionDuration: const Duration(milliseconds: 600),
       ),
     );
   }
 
-  Widget _buildLogoCard() {
+  Widget _buildLogoCard({double size = 120}) {
     return Image.asset(
-      'assets/images/app_logo.jpg',
+      'assets/images/app_logo_cropped.png',
       fit: BoxFit.contain,
-      errorBuilder: (context, error, stackTrace) {
-        return Center(
-          child: RichText(
-            text: TextSpan(
-              style: GoogleFonts.playfairDisplay(
-                fontSize: 90,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              ),
-              children: [
-                const TextSpan(text: 'e'),
-                TextSpan(
-                  text: '´',
-                  style: GoogleFonts.inter(
-                    fontSize: 48,
-                    fontWeight: FontWeight.w900,
-                    color: const Color(0xFFC6F432),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      width: size * 1.3,
+      height: size * 1.3,
+      filterQuality: FilterQuality.high,
     );
   }
 
@@ -131,12 +132,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           onTap: _navigateToHome,
           behavior: HitTestBehavior.opaque,
           child: SafeArea(
-            child: AnimatedBuilder(
-              animation: _animController,
-              builder: (context, _) {
-                return FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: Column(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: Column(
                     children: [
                       // Top spacing
                       SizedBox(height: isCompact ? 12 : 24),
@@ -185,7 +183,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                         child: Center(
                                           child: Opacity(
                                             opacity: 0.35,
-                                            child: _buildLogoCard(),
+                                            child: _buildLogoCard(
+                                                size: isCompact ? 95 : 115),
                                           ),
                                         ),
                                       ),
@@ -200,14 +199,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                       color: Colors.black, // Total Black
                                       borderRadius: BorderRadius.circular(24),
                                       border: Border.all(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.22),
-                                        width: 1.2,
+                                        color: AppTheme.accentLime.withValues(alpha: 0.40),
+                                        width: 1.5,
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black
-                                              .withValues(alpha: 0.9),
+                                          color: AppTheme.accentLime.withValues(alpha: 0.15),
+                                          blurRadius: 32,
+                                          spreadRadius: 1,
+                                          offset: const Offset(0, 8),
+                                        ),
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.9),
                                           blurRadius: 36,
                                           spreadRadius: 2,
                                           offset: const Offset(0, 14),
@@ -216,9 +219,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                     ),
                                     clipBehavior: Clip.antiAlias,
                                     padding: EdgeInsets.all(
-                                        isCompact ? 20 : 26),
+                                        isCompact ? 16 : 22),
                                     child: Center(
-                                      child: _buildLogoCard(),
+                                      child: _buildLogoCard(
+                                          size: isCompact ? 115 : 140),
                                     ),
                                   ),
 
@@ -313,9 +317,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             ),
                             SizedBox(height: isCompact ? 8 : 12),
 
-                            // Main Headline (existing wording)
+                            // Main Headline (Owner perspective)
                             Text(
-                              'Step Into the\nWorld of Live Events',
+                              'Host & Manage\nYour Live Events',
                               style: GoogleFonts.inter(
                                 fontSize: isCompact ? 27 : 32,
                                 fontWeight: FontWeight.w700,
@@ -326,9 +330,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             ),
                             SizedBox(height: isCompact ? 8 : 12),
 
-                            // Subtitle (existing wording)
+                            // Subtitle (Owner perspective)
                             Text(
-                              'Find exciting live events near you and join the action instantly with everything just one tap away.',
+                              'Seamlessly organize events, manage guest check-ins, and track live gate attendance with real-time analytics.',
                               style: GoogleFonts.inter(
                                 fontSize: isCompact ? 12.5 : 13.5,
                                 fontWeight: FontWeight.w400,
@@ -346,23 +350,28 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                 color: Colors.white.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(2),
                               ),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Container(
-                                  height: 2.5,
-                                  width: screenSize.width *
-                                      _animController.value *
-                                      0.85,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.7),
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
+                              child: AnimatedBuilder(
+                                animation: _animController,
+                                builder: (context, _) {
+                                  return Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Container(
+                                      height: 2.5,
+                                      width: screenSize.width *
+                                          _animController.value *
+                                          0.85,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.7),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                             SizedBox(height: isCompact ? 14 : 18),
 
-                            // White Pill Button (Start Exploring)
+                            // White Pill Button (Enter Dashboard)
                             SizedBox(
                               width: double.infinity,
                               height: 52,
@@ -377,7 +386,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                   ),
                                 ),
                                 child: Text(
-                                  'Start Exploring',
+                                  'Enter Dashboard',
                                   style: GoogleFonts.inter(
                                     fontSize: 15.5,
                                     fontWeight: FontWeight.w700,
@@ -392,9 +401,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                     ],
                   ),
-                );
-              },
-            ),
+                ),
           ),
         ),
       ),

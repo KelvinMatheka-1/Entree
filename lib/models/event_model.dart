@@ -18,11 +18,15 @@ class EventModel {
   final int checkedIn;
   final EventStatus status;
   final String? imageUrl;
+  final double? latitude;
+  final double? longitude;
+  final String? geoNode;
 
   final bool isPaid;
   final String? priceBadge;
   final List<String>? attendeeAvatars;
   final String? city;
+  final bool isFeatured;
 
   const EventModel({
     required this.id,
@@ -42,10 +46,14 @@ class EventModel {
     required this.checkedIn,
     required this.status,
     this.imageUrl,
+    this.latitude,
+    this.longitude,
+    this.geoNode,
     this.isPaid = true,
     this.priceBadge,
     this.attendeeAvatars,
     this.city,
+    this.isFeatured = false,
   });
 
   factory EventModel.fromJson(Map<String, dynamic> json) {
@@ -84,6 +92,9 @@ class EventModel {
       checkedIn: (json['checkedIn'] as num?)?.toInt() ?? 0,
       status: parseStatus(json['status']?.toString()),
       imageUrl: json['imageUrl']?.toString(),
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      geoNode: json['geoNode']?.toString(),
       isPaid: json['isPaid'] is bool
           ? json['isPaid']
           : (json['isPaid'] == 1 || json['isPaid'] == 'true'),
@@ -92,6 +103,9 @@ class EventModel {
           ? List<String>.from(json['attendeeAvatars'])
           : null,
       city: json['city']?.toString(),
+      isFeatured: json['isFeatured'] is bool
+          ? json['isFeatured']
+          : (json['isFeatured'] == 1 || json['isFeatured'] == 'true'),
     );
   }
 
@@ -114,10 +128,14 @@ class EventModel {
       'checkedIn': checkedIn,
       'status': status.name,
       'imageUrl': imageUrl,
+      'latitude': latitude,
+      'longitude': longitude,
+      'geoNode': geoNode,
       'isPaid': isPaid,
       'priceBadge': priceBadge,
       'attendeeAvatars': attendeeAvatars,
       'city': city,
+      'isFeatured': isFeatured,
     };
   }
 
@@ -139,10 +157,14 @@ class EventModel {
     int? checkedIn,
     EventStatus? status,
     String? imageUrl,
+    double? latitude,
+    double? longitude,
+    String? geoNode,
     bool? isPaid,
     String? priceBadge,
     List<String>? attendeeAvatars,
     String? city,
+    bool? isFeatured,
   }) {
     return EventModel(
       id: id ?? this.id,
@@ -162,17 +184,29 @@ class EventModel {
       checkedIn: checkedIn ?? this.checkedIn,
       status: status ?? this.status,
       imageUrl: imageUrl ?? this.imageUrl,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      geoNode: geoNode ?? this.geoNode,
       isPaid: isPaid ?? this.isPaid,
       priceBadge: priceBadge ?? this.priceBadge,
       attendeeAvatars: attendeeAvatars ?? this.attendeeAvatars,
       city: city ?? this.city,
+      isFeatured: isFeatured ?? this.isFeatured,
     );
   }
 
   int get available => totalCapacity - passesIssued;
   int get expected => passesIssued - checkedIn;
-  double get checkedInPercentage =>
-      passesIssued > 0 ? checkedIn / passesIssued : 0;
+
+  bool get isCheckInFull =>
+      (passesIssued > 0 && checkedIn >= passesIssued) ||
+      (totalCapacity > 0 && checkedIn >= totalCapacity);
+
+  double get checkedInPercentage {
+    if (isCheckInFull) return 1.0;
+    if (passesIssued > 0) return (checkedIn / passesIssued).clamp(0.0, 1.0);
+    return 0.0;
+  }
 
   String get priceLabel => priceBadge ?? (isPaid ? '\$ Paid' : 'Free');
 

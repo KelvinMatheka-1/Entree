@@ -74,8 +74,8 @@ void main() {
       (WidgetTester tester) async {
     await tester.pumpWidget(const EntreeApp());
     expect(find.byType(MaterialApp), findsOneWidget);
-    expect(find.textContaining('Step Into the'), findsOneWidget);
-    expect(find.text('Start Exploring'), findsOneWidget);
+    expect(find.textContaining('Host & Manage'), findsOneWidget);
+    expect(find.text('Enter Dashboard'), findsOneWidget);
   });
 
   testWidgets('Modern home screen displays all core elements',
@@ -90,11 +90,11 @@ void main() {
     await tester.pumpWidget(const EntreeApp(home: HomeScreen()));
     await tester.pump(const Duration(milliseconds: 300));
 
-    // Verify "Find events in" header
-    expect(find.text('Find events in'), findsOneWidget);
+    // Verify "Host Portal" header
+    expect(find.text('Host Portal'), findsOneWidget);
 
-    // Verify "Popular Event" section
-    expect(find.text('Popular Event'), findsOneWidget);
+    // Verify "Featured Event" section
+    expect(find.text('Featured Event'), findsOneWidget);
 
     // Verify "Ongoing Splits" section is removed
     expect(find.text('Ongoing Splits'), findsNothing);
@@ -102,8 +102,16 @@ void main() {
     // Verify "Upcoming Events" section
     expect(find.text('Upcoming Events'), findsOneWidget);
 
+    // Verify upcoming events vertical list scrolls within its box
+    final upcomingList = find.byType(ListView);
+    expect(upcomingList, findsOneWidget);
+    await tester.drag(upcomingList, const Offset(0, -100));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.drag(upcomingList, const Offset(0, 100));
+    await tester.pump(const Duration(milliseconds: 300));
+
     // Verify bottom navigation items
-    expect(find.text('Discover'), findsOneWidget);
+    expect(find.text('Events'), findsOneWidget);
     expect(find.text('Check-in'), findsOneWidget);
     expect(find.text('Calendar'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);
@@ -126,13 +134,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('Profile'), findsWidgets);
-    expect(find.text('Alex Morgan'), findsOneWidget);
+    expect(find.text('Kelvin Matheka'), findsOneWidget);
 
-    // Tap Discover nav item to return
-    await tester.tap(find.text('Discover'));
+    // Tap Events nav item to return
+    await tester.tap(find.text('Events'));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Popular Event'), findsOneWidget);
+    expect(find.text('Featured Event'), findsOneWidget);
   });
 
   testWidgets('Tapping popular event opens EventDetailsScreen with check-in hub',
@@ -182,31 +190,29 @@ void main() {
 
     // 1. Verify chat icon is removed from home page
     expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
-    // Notification button is present
-    expect(find.byIcon(Icons.notifications_none_rounded), findsOneWidget);
 
     // 2. Navigate to Profile page
     await tester.tap(find.text('Profile'));
     await tester.pump(const Duration(milliseconds: 300));
 
-    // Verify PRO badge is removed next to Alex Morgan
-    expect(find.text('Alex Morgan'), findsOneWidget);
+    // Verify PRO badge is removed next to Kelvin Matheka
+    expect(find.text('Kelvin Matheka'), findsOneWidget);
     expect(find.text('PRO'), findsNothing);
 
     // 3. Verify Appearance & Display section and Theme Mode toggle
     expect(find.text('Appearance & Display'), findsOneWidget);
     expect(find.text('Dark Mode'), findsOneWidget);
-    expect(find.byType(Switch), findsOneWidget);
+    expect(find.byType(Switch), findsWidgets);
     // Verify segmented option cards are removed (toggle only)
     expect(find.text('Light Mode'), findsNothing);
 
     // 4. Tap toggle switch to enable Dark Mode
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byType(Switch).first);
     await tester.pumpAndSettle();
     expect(AppTheme.themeMode.value, ThemeMode.dark);
 
     // 5. Tap toggle switch again to return to Light Mode
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byType(Switch).first);
     await tester.pumpAndSettle();
     expect(AppTheme.themeMode.value, ThemeMode.light);
   });
@@ -255,14 +261,14 @@ void main() {
 
     await tester.pumpWidget(const EntreeApp(home: HomeScreen()));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Popular Event'), findsOneWidget);
+    expect(find.text('Featured Event'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // 2. Tablet view (800 x 1200)
     tester.view.physicalSize = const Size(800 * 2.0, 1200 * 2.0);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Popular Event'), findsOneWidget);
+    expect(find.text('Featured Event'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // 3. Desktop / wide view (1440 x 900)
@@ -270,7 +276,7 @@ void main() {
     tester.view.devicePixelRatio = 1.5;
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Popular Event'), findsOneWidget);
+    expect(find.text('Featured Event'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     tester.view.resetPhysicalSize();
@@ -298,11 +304,11 @@ void main() {
     expect(find.text('Create event'), findsWidgets);
     expect(find.text('Save draft'), findsOneWidget);
     expect(find.text('Event image'), findsOneWidget);
-    expect(find.text('Change image'), findsOneWidget);
+    expect(find.text('Upload Event Cover Image'), findsOneWidget);
     expect(find.text('Event name'), findsOneWidget);
     expect(find.text('WHEN & WHERE'), findsOneWidget);
     expect(find.text('SEATING & PASSES'), findsOneWidget);
-    expect(find.text('120 total seats / passes'), findsOneWidget);
+    expect(find.text('Capacity not configured'), findsOneWidget);
 
     // Verify no exceptions thrown
     expect(tester.takeException(), isNull);

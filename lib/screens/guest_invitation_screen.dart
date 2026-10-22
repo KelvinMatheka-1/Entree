@@ -1,7 +1,16 @@
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
+import '../services/api_service.dart';
+import '../services/invite_crypto_service.dart';
 import '../widgets/common_widgets.dart';
 import 'registered_guests_screen.dart';
 import 'scan_entry_screen.dart';
@@ -407,7 +416,8 @@ class TicketValidationScreen extends StatelessWidget {
 }
 
 // Guest Invitation / Pass Preview Screen
-class GuestInvitationScreen extends StatelessWidget {
+// Guest Invitation / Pass Preview Screen
+class GuestInvitationScreen extends StatefulWidget {
   final EventModel event;
   final GuestModel guest;
 
@@ -418,11 +428,92 @@ class GuestInvitationScreen extends StatelessWidget {
   });
 
   @override
+  State<GuestInvitationScreen> createState() => _GuestInvitationScreenState();
+}
+
+class _GuestInvitationScreenState extends State<GuestInvitationScreen> {
+  final GlobalKey _passCardKey = GlobalKey();
+  bool _isSharing = false;
+
+  String get _deepLink => InviteCryptoService.generateDeepLink(
+        eventId: widget.event.id,
+        guestId: widget.guest.id,
+        inviteCode: widget.guest.passId,
+        fullName: widget.guest.fullName,
+      );
+
+  Future<void> _sharePassCard() async {
+    if (_isSharing) return;
+    setState(() => _isSharing = true);
+
+    try {
+      final boundary =
+          _passCardKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        throw Exception('Pass card boundary not found in tree');
+      }
+
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw Exception('Failed to encode raster pass image');
+      }
+
+      final pngBytes = byteData.buffer.asUint8List();
+      final tempDir = await getTemporaryDirectory();
+      final safePassId =
+          widget.guest.passId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      final file = File('${tempDir.path}/entree_pass_$safePassId.png');
+      await file.writeAsBytes(pngBytes);
+
+      final shareText = "🎟️ You're invited to ${widget.event.name}!\n\n"
+          "📅 ${widget.event.dayString} ${widget.event.monthShort} ${widget.event.date.year} · ${widget.event.startTime}–${widget.event.endTime}\n"
+          "📍 ${widget.event.venue}${widget.event.venueAddress.isNotEmpty ? " · ${widget.event.venueAddress}" : ""}\n"
+          "👤 Guest: ${widget.guest.fullName} (Table ${widget.guest.tableNumber})\n\n"
+          "👉 Open your personal ticket pass:\n$_deepLink\n\n"
+          "Show this QR pass at the entrance gate for quick check-in.";
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: shareText,
+        subject: "Your Ticket to ${widget.event.name} - ${widget.guest.fullName}",
+      );
+    } catch (e) {
+      debugPrint('[SHARE_PASS] Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to share pass: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSharing = false);
+    }
+  }
+
+  void _copyLink() {
+    Clipboard.setData(ClipboardData(text: _deepLink));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Invite link copied to clipboard!'),
+        backgroundColor: AppTheme.primaryPurple,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final event = widget.event;
+    final guest = widget.guest;
     final canPop = Navigator.canPop(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final deepLink = _deepLink;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFEDE9FE),
+      backgroundColor: isDark ? AppTheme.darkBackground : const Color(0xFFEDE9FE),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Center(
@@ -431,443 +522,574 @@ class GuestInvitationScreen extends StatelessWidget {
               child: Column(
                 children: [
                   // Top Bar
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        if (canPop)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: GestureDetector(
-                              onTap: () => Navigator.pop(context),
-                              child: Container(
-                                width: 28,
-                                height: 28,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withAlpha(200),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.arrow_back,
-                                  size: 16,
-                                  color: AppTheme.textPrimary,
+                        Row(
+                          children: [
+                            if (canPop)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 10),
+                                child: GestureDetector(
+                                  onTap: () => Navigator.pop(context),
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: isDark
+                                          ? AppTheme.darkSurface
+                                          : Colors.white.withAlpha(200),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.arrow_back,
+                                      size: 18,
+                                      color: isDark
+                                          ? AppTheme.darkTextPrimary
+                                          : AppTheme.textPrimary,
+                                    ),
+                                  ),
                                 ),
                               ),
+                            Text(
+                              'Digital Entry Pass',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: isDark
+                                    ? AppTheme.darkTextPrimary
+                                    : AppTheme.textPrimary,
+                              ),
                             ),
-                          ),
-                        Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryPurple,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Icon(
-                            Icons.door_front_door_outlined,
-                            color: Colors.white,
-                            size: 14,
-                          ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'entrée',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.lock_outline,
-                          size: 16,
-                          color: AppTheme.textSecondary,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          'Your invitation',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: AppTheme.textSecondary,
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.verified_outlined,
+                              size: 15,
+                              color: isDark
+                                  ? AppTheme.accentLime
+                                  : AppTheme.primaryPurple,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Verified Pass',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? AppTheme.accentLime
+                                    : AppTheme.primaryPurple,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-
-              // Invitation Pass Card
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha(15),
-                        blurRadius: 20,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Cover image
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(16),
-                        ),
-                        child: Container(
-                          width: double.infinity,
-                          height: 160,
-                          decoration: const BoxDecoration(
-                            image: DecorationImage(
-                              image: NetworkImage(
-                                'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&h=300&fit=crop',
-                              ),
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ),
-                      ),
 
-                      Padding(
-                        padding: const EdgeInsets.all(20),
+                  // RepaintBoundary wrapping the visual Digital Ticket Pass Card
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: RepaintBoundary(
+                      key: _passCardKey,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isDark ? AppTheme.darkSurface : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isDark
+                                ? AppTheme.darkCardBorder
+                                : AppTheme.borderLight,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withAlpha(isDark ? 80 : 18),
+                              blurRadius: 24,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              "YOU'RE INVITED",
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.primaryPurple,
-                                letterSpacing: 0.8,
+                            // Cover banner
+                            ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(19),
+                              ),
+                              child: SafeNetworkImage(
+                                imageUrl: event.imageUrl,
+                                width: double.infinity,
+                                height: 160,
+                                fit: BoxFit.cover,
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              event.name,
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.textPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Saturday, 24 October 2026 · ${event.startTime}–${event.endTime}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.textSecondary,
-                              ),
-                            ),
-                            Text(
-                              '${event.venue} · ${event.venueAddress}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.textSecondary,
-                              ),
-                            ),
-                            const SizedBox(height: 24),
 
-                            // QR Code Frame
-                            Center(
-                              child: Container(
-                                width: 200,
-                                height: 200,
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  border: Border.all(
-                                    color: AppTheme.borderLight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    CustomPaint(
-                                      size: const Size(176, 176),
-                                      painter: _QRPatternPainter(),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: AppTheme.borderLight,
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'DEMO',
+                            Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        "YOU'RE INVITED",
                                         style: TextStyle(
                                           fontSize: 11,
                                           fontWeight: FontWeight.w700,
-                                          color: AppTheme.textPrimary,
-                                          letterSpacing: 1,
+                                          color: isDark
+                                              ? AppTheme.accentLime
+                                              : AppTheme.primaryPurple,
+                                          letterSpacing: 0.8,
                                         ),
+                                      ),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 22,
+                                            height: 22,
+                                            decoration: BoxDecoration(
+                                              color: isDark
+                                                  ? Colors.black
+                                                  : Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: isDark
+                                                    ? Colors.white24
+                                                    : AppTheme.borderLight,
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(5),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.all(2.5),
+                                                child: Image.asset(
+                                                  isDark
+                                                      ? 'assets/images/app_logo_cropped.png'
+                                                      : 'assets/images/app_logo_light_cropped.png',
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'entrée',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color: isDark
+                                                  ? AppTheme.darkTextPrimary
+                                                  : AppTheme.textPrimary,
+                                              letterSpacing: -0.2,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    event.name,
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w700,
+                                      color: isDark
+                                          ? AppTheme.darkTextPrimary
+                                          : AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${event.dayString} ${event.monthShort} ${event.date.year} · ${event.startTime}–${event.endTime}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isDark
+                                          ? AppTheme.darkTextSecondary
+                                          : AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${event.venue}${event.venueAddress.isNotEmpty ? " · ${event.venueAddress}" : ""}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isDark
+                                          ? AppTheme.darkTextSecondary
+                                          : AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+
+                                  // Cryptographic QR Code Container
+                                  Center(
+                                    child: Container(
+                                      width: 220,
+                                      height: 220,
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        border: Border.all(
+                                          color: AppTheme.borderLight,
+                                          width: 1.5,
+                                        ),
+                                        borderRadius: BorderRadius.circular(20),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withAlpha(12),
+                                            blurRadius: 18,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: QrImageView(
+                                        data: deepLink,
+                                        version: QrVersions.auto,
+                                        size: 192,
+                                        backgroundColor: Colors.white,
+                                        eyeStyle: const QrEyeStyle(
+                                          eyeShape: QrEyeShape.square,
+                                          color: Color(0xFF1E1B4B),
+                                        ),
+                                        dataModuleStyle:
+                                            const QrDataModuleStyle(
+                                          dataModuleShape:
+                                              QrDataModuleShape.square,
+                                          color: Color(0xFF1E1B4B),
+                                        ),
+                                        padding: EdgeInsets.zero,
                                       ),
                                     ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            const Center(
-                              child: Text(
-                                'Your pass to a lovely evening',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppTheme.textPrimary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            const Center(
-                              child: Text(
-                                'Illustrative QR · not a valid entry credential',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.textTertiary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            const Divider(),
-                            const SizedBox(height: 16),
+                                  ),
+                                  const SizedBox(height: 14),
 
-                            // Guest & Table Info
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+
+                                  Center(
+                                    child: Text(
+                                      'Pass ID: ${guest.passId} · ${guest.fullName}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark
+                                            ? AppTheme.darkTextPrimary
+                                            : AppTheme.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  const Divider(),
+                                  const SizedBox(height: 16),
+
+                                  // Guest & Table Information
+                                  Row(
                                     children: [
-                                      Text(
-                                        'GUEST',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppTheme.textTertiary,
-                                          letterSpacing: 0.5,
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'GUEST',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w600,
+                                                color: isDark
+                                                    ? AppTheme.darkTextTertiary
+                                                    : AppTheme.textTertiary,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              guest.fullName,
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w700,
+                                                color: isDark
+                                                    ? AppTheme.darkTextPrimary
+                                                    : AppTheme.textPrimary,
+                                              ),
+                                            ),
+                                            Text(
+                                              '${guest.passId} · ${guest.admission} · ${guest.guestCount} guest',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: isDark
+                                                    ? AppTheme.darkTextSecondary
+                                                    : AppTheme.textSecondary,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        guest.fullName,
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppTheme.textPrimary,
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 8,
                                         ),
-                                      ),
-                                      Text(
-                                        '${guest.passId} · Supper pass · 1 guest',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: AppTheme.textSecondary,
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.upcomingPurpleBg,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Text(
+                                              'TABLE',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.w600,
+                                                color: AppTheme.primaryPurple,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                            Text(
+                                              guest.tableNumber,
+                                              style: const TextStyle(
+                                                fontSize: 22,
+                                                fontWeight: FontWeight.w700,
+                                                color: AppTheme.primaryPurple,
+                                              ),
+                                            ),
+                                            Text(
+                                              guest.tableName,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
+                                                color: AppTheme.primaryPurple,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
                                   ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.upcomingPurpleBg,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        'TABLE',
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppTheme.primaryPurple,
-                                          letterSpacing: 0.5,
-                                        ),
+                                  const SizedBox(height: 18),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.04)
+                                          : const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isDark
+                                            ? AppTheme.darkCardBorder
+                                            : AppTheme.borderLight,
+                                        width: 0.8,
                                       ),
-                                      Text(
-                                        guest.tableNumber,
-                                        style: const TextStyle(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppTheme.primaryPurple,
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            child: Image.asset(
+                                              isDark
+                                                  ? 'assets/images/app_logo_cropped.png'
+                                                  : 'assets/images/app_logo_light_cropped.png',
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      Text(
-                                        guest.tableName,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w500,
-                                          color: AppTheme.primaryPurple,
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Official Digital Entry Pass · Powered by entrée',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: isDark
+                                                ? AppTheme.darkTextSecondary
+                                                : AppTheme.textSecondary,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Info note
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(
-                      Icons.info_outline,
-                      size: 15,
-                      color: AppTheme.primaryPurple,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Doors open at ${event.doorsOpenTime}. Have your personal pass ready at entry; the host will guide you to Table ${guest.tableNumber}.',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.textSecondary,
-                          height: 1.4,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Info instructions
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          size: 15,
+                          color: AppTheme.primaryPurple,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Doors open at ${event.doorsOpenTime}. Have your personal pass ready at entry; the host will guide you to Table ${guest.tableNumber}.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark
+                                  ? AppTheme.darkTextSecondary
+                                  : AppTheme.textSecondary,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Share Actions: PNG capture + Deep link sharing
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _isSharing ? null : _sharePassCard,
+                            icon: _isSharing
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.share_outlined, size: 18),
+                            label: Text(
+                              _isSharing
+                                  ? 'Generating pass image...'
+                                  : 'Send & Share Ticket Pass',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: isDark
+                                  ? AppTheme.accentLime
+                                  : AppTheme.primaryPurple,
+                              foregroundColor:
+                                  isDark ? Colors.black : Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Deep link preview box
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: InkWell(
+                      onTap: _copyLink,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? AppTheme.darkSurface
+                              : Colors.white.withAlpha(180),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isDark
+                                ? AppTheme.darkCardBorder
+                                : AppTheme.borderLight,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.link_rounded,
+                              size: 16,
+                              color: AppTheme.primaryPurple,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                deepLink,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppTheme.primaryPurple,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Tap to copy',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.textTertiary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Save button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Invitation pass saved to your photos!'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.download_outlined, size: 18),
-                    label: const Text('Save invitation preview'),
                   ),
-                ),
-              ),
-              const SizedBox(height: 16),
+                  const SizedBox(height: 24),
 
-              // Footer
-              Text(
-                'Hosted by The Glasshouse Collection · Powered by entrée',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textTertiary,
-                ),
+                  // Footer
+                  Text(
+                    'Hosted by The Glasshouse Collection · Powered by entrée',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark
+                          ? AppTheme.darkTextTertiary
+                          : AppTheme.textTertiary,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
               ),
-              const SizedBox(height: 32),
-            ],
+            ),
           ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
-}
-
-class _QRPatternPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF1E293B)
-      ..style = PaintingStyle.fill;
-
-    const moduleCount = 21;
-    final cellSize = size.width / moduleCount;
-
-    // Helper to draw a square module
-    void drawModule(int r, int c) {
-      canvas.drawRect(
-        Rect.fromLTWH(c * cellSize, r * cellSize, cellSize - 0.5, cellSize - 0.5),
-        paint,
-      );
-    }
-
-    // Helper to draw a finder square (7x7)
-    void drawFinderPattern(int startR, int startC) {
-      for (var r = 0; r < 7; r++) {
-        for (var c = 0; c < 7; c++) {
-          final isBorder = r == 0 || r == 6 || c == 0 || c == 6;
-          final isCenter = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-          if (isBorder || isCenter) {
-            drawModule(startR + r, startC + c);
-          }
-        }
-      }
-    }
-
-    // 1. Draw 3 main QR finder patterns
-    drawFinderPattern(0, 0); // Top-left
-    drawFinderPattern(0, moduleCount - 7); // Top-right
-    drawFinderPattern(moduleCount - 7, 0); // Bottom-left
-
-    // 2. Timing patterns
-    for (var i = 8; i < moduleCount - 8; i += 2) {
-      drawModule(6, i);
-      drawModule(i, 6);
-    }
-
-    // 3. Simulated data modules (deterministic pattern)
-    for (var r = 0; r < moduleCount; r++) {
-      for (var c = 0; c < moduleCount; c++) {
-        // Skip finder pattern zones
-        if (r < 8 && c < 8) continue;
-        if (r < 8 && c >= moduleCount - 8) continue;
-        if (r >= moduleCount - 8 && c < 8) continue;
-
-        // Skip center cutout for "DEMO" pill
-        if (r >= 8 && r <= 12 && c >= 7 && c <= 13) continue;
-
-        // Generate clean QR-like pattern
-        final hash = (r * 31 + c * 17 + (r ^ c)) % 100;
-        if (hash > 45) {
-          drawModule(r, c);
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

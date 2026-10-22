@@ -51,6 +51,9 @@ export class MachineNovaClient {
   }
 
   public isConfigured(): boolean {
+    if (!config.machinenova.useMachineNovaLive) {
+      return false;
+    }
     return Boolean(
       (config.machinenova.apiKey && config.machinenova.apiSecret) ||
       (config.machinenova.username && config.machinenova.password)

@@ -1,6 +1,28 @@
 import { query, getClient } from './database.js';
 
 export async function seedInitialData(): Promise<void> {
+  try {
+    const profileCountResult = await query('SELECT COUNT(*) as count FROM user_profile');
+    const profileCount = parseInt(profileCountResult.rows[0]?.count || '0', 10);
+    if (profileCount === 0) {
+      await query(`
+        INSERT INTO user_profile (id, full_name, email, role, organization, phone, scanner_speed, haptic_feedback)
+        VALUES (
+          'default-user',
+          'Kelvin Matheka',
+          'kelvin@entree.app',
+          'Event Owner',
+          'Entrée',
+          '+254 700 000 000',
+          'High sensitivity',
+          TRUE
+        );
+      `);
+    }
+  } catch (err: any) {
+    console.warn('[DATABASE] User profile seed check warning:', err.message);
+  }
+
   const countResult = await query('SELECT COUNT(*) as count FROM events');
   const count = parseInt(countResult.rows[0]?.count || '0', 10);
   if (count > 0) {

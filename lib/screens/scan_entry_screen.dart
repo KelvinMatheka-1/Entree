@@ -1,11 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../theme/app_theme.dart';
 import '../models/event_model.dart';
 import '../models/guest_model.dart';
 import '../data/mock_data.dart';
 import '../services/api_service.dart';
+import '../widgets/common_widgets.dart';
 import 'guest_invitation_screen.dart';
 import 'registered_guests_screen.dart';
 
@@ -79,62 +81,585 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
   }
 
   Future<void> _processScannedValue(String code) async {
-    final verification = await ApiService.instance.verifyScan(_currentEvent.id, code);
+    // 1. Verify offline signature first & check-in against repository
+    final result = await ApiService.instance.verifyAndCheckIn(_currentEvent.id, code);
 
-    if (!verification.canCheckIn) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(verification.message),
-          backgroundColor: Colors.amber.shade800,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      Future.delayed(const Duration(milliseconds: 1200), () {
-        if (mounted) setState(() => _isProcessingScan = false);
-      });
-      return;
+    // 2. Dynamic Haptic feedback
+    if (result.isValid) {
+      HapticFeedback.mediumImpact();
+    } else if (result.isDuplicate) {
+      HapticFeedback.heavyImpact();
+    } else {
+      HapticFeedback.vibrate();
     }
 
-    final checkInRes = await ApiService.instance.checkInGuest(_currentEvent.id, code);
     if (!mounted) return;
 
-    final guest = checkInRes.guest ??
-        verification.guest ??
-        GuestModel(
-          id: 'QR-${code.hashCode.abs().toString().padLeft(6, '0').substring(0, 6)}',
-          passId: code.length > 20 ? '${code.substring(0, 17)}...' : code,
-          fullName: 'Pass Holder (${code.length > 12 ? code.substring(0, 10) : code})',
-          email: 'guest@entree-pass.com',
-          tableNumber: 'A-12',
-          tableName: 'Verified Admission',
-          status: GuestCheckInStatus.checkedIn,
-          checkInTime: 'Just now',
-          admission: 'General Admission',
-        );
+    if (result.isValid) {
+      await _refreshEvent();
+    }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TicketValidationScreen(
-          event: _currentEvent,
-          guest: guest,
-        ),
-      ),
-    ).then((_) {
-      _refreshEvent();
-      Future.delayed(const Duration(milliseconds: 800), () {
+    // 3. Display dedicated styled UI state
+    await _showVerificationModal(result, code);
+
+    if (mounted) {
+      await _refreshEvent();
+      Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) {
           setState(() {
             _isProcessingScan = false;
           });
         }
       });
-    });
+    }
+  }
+
+  Future<void> _showVerificationModal(VerificationResult result, String code) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final guest = result.guest;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.darkSurface : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 90 : 30),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Pull bar indicator
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+
+              if (result.isValid) ...[
+                // --- 1. VALID CHECK-IN STATE ---
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFE8F7F0),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_rounded,
+                    size: 38,
+                    color: AppTheme.liveGreen,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Valid Check-In',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Pass verified. Guest admitted.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                // Guest Card
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppTheme.darkCard : const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isDark ? AppTheme.darkCardBorder : AppTheme.borderLight,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          AvatarCircle(
+                            initials: guest?.initials ?? 'G',
+                            size: 44,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  guest?.fullName ?? 'Verified Attendee',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                    color: isDark
+                                        ? AppTheme.darkTextPrimary
+                                        : AppTheme.textPrimary,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${guest?.passId ?? code} · ${guest?.admission ?? "General Admission"}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isDark
+                                        ? AppTheme.darkTextSecondary
+                                        : AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.upcomingPurpleBg,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  'TABLE',
+                                  style: TextStyle(
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.primaryPurple,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                Text(
+                                  guest?.tableNumber ?? '01',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.primaryPurple,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const Divider(height: 1),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.access_time_rounded,
+                                size: 14,
+                                color: AppTheme.liveGreen,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                'Checked in at ${guest?.checkInTime ?? "Just now"}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.liveGreen,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (result.isCryptographicallyVerified)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8F7F0),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.shield_outlined, size: 11, color: AppTheme.liveGreen),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'HMAC Verified',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.liveGreen,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                // Primary button: Scan next pass
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.qr_code_scanner, size: 18),
+                    label: const Text('Scan next pass'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          isDark ? AppTheme.accentLime : AppTheme.primaryPurple,
+                      foregroundColor: isDark ? Colors.black : Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                if (guest != null) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TicketValidationScreen(
+                              event: _currentEvent,
+                              guest: guest,
+                            ),
+                          ),
+                        ).then((_) => _refreshEvent());
+                      },
+                      child: const Text('View full pass details'),
+                    ),
+                  ),
+                ],
+              ] else if (result.isDuplicate) ...[
+                // --- 2. DUPLICATE SCAN STATE (AMBER) ---
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFDE68A), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 38,
+                    color: Color(0xFFB45309),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Duplicate Scan · Already Used',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.amber.shade200 : const Color(0xFF92400E),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Do not admit again. This pass has already entered.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.history_toggle_off_rounded,
+                              size: 16, color: Color(0xFF92400E)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Previous Check-in: ${result.previousCheckInTime ?? result.guest?.checkInTime ?? "Earlier today"}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF92400E),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${guest?.fullName ?? "Attendee"} (${guest?.passId ?? code}) was previously recorded at this gate. Verify attendee photo ID before allowing re-entry.',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Color(0xFFB45309),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFB45309),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Acknowledge & Scan Next',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                // --- 3. INVALID / TAMPERED / WRONG EVENT STATE (CRIMSON) ---
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFECACA), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.cancel_outlined,
+                    size: 38,
+                    color: Color(0xFFDC2626),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  result.isWrongEvent
+                      ? 'Wrong Event · Entry Denied'
+                      : 'Scan Rejected · Invalid Pass',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.red.shade300 : const Color(0xFF991B1B),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  result.isWrongEvent
+                      ? 'Pass does not match this event.'
+                      : 'Signature verification failed or payload altered.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.error_outline, size: 16, color: Color(0xFFDC2626)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              result.isWrongEvent ? 'Jurisdiction Mismatch' : 'Tampered / Unrecognized Credential',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF991B1B),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        result.message,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Color(0xFFB91C1C),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFDC2626),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Dismiss & Try Again',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _onSimulateScan() async {
     if (_isProcessingScan) return;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white24 : Colors.black12,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Simulate Scan Verification',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Select a scan state to test the real-time verification pipeline:',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFE8F7F0),
+                    child: Icon(Icons.check, color: AppTheme.liveGreen),
+                  ),
+                  title: const Text('1. Valid Attendee Scan', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Cryptographically signed pass confirms admission'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _simulateValidScan();
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFFEF3C7),
+                    child: Icon(Icons.warning_amber_rounded, color: Color(0xFFB45309)),
+                  ),
+                  title: const Text('2. Duplicate Scan', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Pass already admitted with prior timestamp'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _simulateDuplicateScan();
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFFEE2E2),
+                    child: Icon(Icons.cancel_outlined, color: Color(0xFFDC2626)),
+                  ),
+                  title: const Text('3. Tampered / Corrupt Scan', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('HMAC-SHA256 signature verification fails'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _simulateTamperedScan();
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFFEE2E2),
+                    child: Icon(Icons.wrong_location_outlined, color: Color(0xFFDC2626)),
+                  ),
+                  title: const Text('4. Wrong Event Scan', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Pass belongs to another event jurisdiction'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _simulateWrongEventScan();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _simulateValidScan() async {
     _isProcessingScan = true;
     try {
       final guests = await ApiService.instance.getGuests(_currentEvent.id);
@@ -142,10 +667,56 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
         (g) => !g.isCheckedIn,
         orElse: () => guests.isNotEmpty ? guests.first : MockData.guests.first,
       );
+      // Generate genuine signed invite deep link for candidate
+      final deepLink = InviteCryptoService.generateDeepLink(
+        eventId: _currentEvent.id,
+        guestId: candidate.id,
+        inviteCode: candidate.passId,
+        fullName: candidate.fullName,
+      );
+      await _processScannedValue(deepLink);
+    } catch (_) {
+      if (mounted) setState(() => _isProcessingScan = false);
+    }
+  }
+
+  Future<void> _simulateDuplicateScan() async {
+    _isProcessingScan = true;
+    try {
+      final guests = await ApiService.instance.getGuests(_currentEvent.id);
+      GuestModel candidate = guests.firstWhere(
+        (g) => g.isCheckedIn,
+        orElse: () => guests.first,
+      );
+      if (!candidate.isCheckedIn) {
+        // Check them in first so we can test duplicate scan
+        await ApiService.instance.checkInGuest(_currentEvent.id, candidate.passId);
+        final refreshed = await ApiService.instance.getGuests(_currentEvent.id);
+        candidate = refreshed.firstWhere((g) => g.id == candidate.id);
+      }
       await _processScannedValue(candidate.passId);
     } catch (_) {
       if (mounted) setState(() => _isProcessingScan = false);
     }
+  }
+
+  Future<void> _simulateTamperedScan() async {
+    _isProcessingScan = true;
+    // Construct an invite payload with a falsified HMAC signature
+    const tamperedPayload = '{"v":1,"event_id":"ev-01","guest_id":"g-test","invite_code":"PASS-999","sig":"forged-fake-signature"}';
+    await _processScannedValue(tamperedPayload);
+  }
+
+  Future<void> _simulateWrongEventScan() async {
+    _isProcessingScan = true;
+    // Generate authentic HMAC signature but for a different event
+    final wrongEventDeepLink = InviteCryptoService.generateDeepLink(
+      eventId: 'different-foreign-event-999',
+      guestId: 'guest-foreign-1',
+      inviteCode: 'FOREIGN-PASS-88',
+      fullName: 'Foreign Attendee',
+    );
+    await _processScannedValue(wrongEventDeepLink);
   }
 
   @override
@@ -231,25 +802,12 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                         ),
                         child: Row(
                           children: [
-                            ClipRRect(
+                            SafeNetworkImage(
+                              imageUrl: event.imageUrl,
+                              width: 44,
+                              height: 44,
                               borderRadius: BorderRadius.circular(10),
-                              child: Image.network(
-                                event.imageUrl ??
-                                    'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=100&h=100&fit=crop',
-                                width: 44,
-                                height: 44,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Container(
-                                  width: 44,
-                                  height: 44,
-                                  color: isDark
-                                      ? AppTheme.darkSurface
-                                      : AppTheme.draftGrayBg,
-                                  child: const Icon(Icons.smart_toy_rounded,
-                                      color: AppTheme.textTertiary),
-                                ),
-                              ),
+                              fit: BoxFit.cover,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -493,20 +1051,51 @@ class _ScanEntryScreenState extends State<ScanEntryScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.check_circle_outline,
-                            size: 14,
-                            color: isDark
-                                ? AppTheme.darkTextSecondary
-                                : AppTheme.textSecondary,
+                            event.isCheckInFull
+                                ? Icons.check_circle_rounded
+                                : Icons.check_circle_outline,
+                            size: 15,
+                            color: event.isCheckInFull
+                                ? const Color(0xFF10B981)
+                                : (isDark
+                                    ? AppTheme.darkTextSecondary
+                                    : AppTheme.textSecondary),
                           ),
                           const SizedBox(width: 6),
+                          if (event.isCheckInFull) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEF4444),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'FULL',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
                           Text(
-                            '${event.checkedIn} checked in · ${event.expected} still expected',
+                            event.isCheckInFull
+                                ? '${event.checkedIn}/${event.passesIssued} Checked In · Full House'
+                                : '${event.checkedIn} checked in · ${event.expected} still expected',
                             style: TextStyle(
                               fontSize: 12,
-                              color: isDark
-                                  ? AppTheme.darkTextSecondary
-                                  : AppTheme.textSecondary,
+                              fontWeight: event.isCheckInFull
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                              color: event.isCheckInFull
+                                  ? const Color(0xFF10B981)
+                                  : (isDark
+                                      ? AppTheme.darkTextSecondary
+                                      : AppTheme.textSecondary),
                             ),
                           ),
                         ],

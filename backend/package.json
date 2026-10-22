@@ -8,7 +8,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:setup": "tsx -e \"import('./src/db/database.js').then(m => m.initDatabase()).then(() => import('./src/db/seed.js')).then(m => m.seedInitialData()).then(() => { console.log('[DATABASE] Setup complete.'); process.exit(0); })\"",
+    "db:seed": "npm run db:setup"
   },
   "keywords": [
     "entree",

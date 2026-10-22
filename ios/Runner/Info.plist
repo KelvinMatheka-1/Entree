@@ -66,5 +66,32 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+
+	<!-- Permissions -->
+	<key>NSCameraUsageDescription</key>
+	<string>Entrée needs camera access to scan ticket QR codes and capture event photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Entrée needs photo library access to choose event cover images and profile avatars.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Entrée needs location access to pinpoint event venue coordinates on the map.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Entrée needs location access to pinpoint event venue coordinates on the map.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Entrée needs location access to pinpoint event venue coordinates on the map.</string>
+
+	<!-- Deep Linking: entree://invite -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.entree.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>entree</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

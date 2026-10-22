@@ -154,6 +154,22 @@ export async function initDatabase(): Promise<void> {
       );
     `);
 
+    // 5. User Profile Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_profile (
+        id VARCHAR(64) PRIMARY KEY,
+        full_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(128) DEFAULT 'Lead Event Director',
+        organization VARCHAR(128) DEFAULT 'MachineNova Global',
+        phone VARCHAR(64) DEFAULT '+254 700 000 000',
+        avatar_url TEXT DEFAULT '',
+        scanner_speed VARCHAR(32) DEFAULT 'High sensitivity',
+        haptic_feedback BOOLEAN DEFAULT TRUE,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Indexes
     if (!isInMemory) {
       await client.query(`
