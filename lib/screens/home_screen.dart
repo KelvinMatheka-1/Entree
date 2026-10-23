@@ -61,7 +61,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   IconData _getEventCategoryIcon(EventModel event) {
     final name = event.name.toLowerCase();
-    if (name.contains('ai') ||
+    if (name.contains('chameleon') ||
+        name.contains('art') ||
+        name.contains('graffiti') ||
+        name.contains('visual') ||
+        name.contains('design')) {
+      return Icons.palette_rounded;
+    } else if (name.contains('naivas') ||
+        name.contains('food') ||
+        name.contains('market') ||
+        name.contains('culinary') ||
+        name.contains('dining')) {
+      return Icons.restaurant_rounded;
+    } else if (name.contains('ai') ||
         name.contains('frontier') ||
         name.contains('keynote') ||
         name.contains('robotics')) {
@@ -705,77 +717,14 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(24),
           child: Stack(
             children: [
-              // 1. Blurred Background Image filling entire 340px container
+              // Full-bleed Rectangular Event Cover Image
               Positioned.fill(
-                child: Container(
+                child: SafeNetworkImage(
+                  imageUrl: event.imageUrl,
+                  fit: BoxFit.cover,
                   height: 340,
-                  color: isDark ? const Color(0xFF121212) : const Color(0xFF222222),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ImageFiltered(
-                        imageFilter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                        child: Transform.scale(
-                          scale: 1.18,
-                          child: SafeNetworkImage(
-                            imageUrl: event.imageUrl,
-                            fit: BoxFit.cover,
-                            height: 340,
-                            width: double.infinity,
-                          ),
-                        ),
-                      ),
-                      // Ambient tint over the blurred background for contrast
-                      Container(
-                        color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.28),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // 2. Centered Zoomed-out Foreground Image with softly blended feathered edges
-              Positioned.fill(
-                child: Center(
-                  child: ShaderMask(
-                    shaderCallback: (Rect bounds) {
-                      return const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black,
-                          Colors.black,
-                          Colors.transparent,
-                        ],
-                        stops: [0.0, 0.09, 0.91, 1.0],
-                      ).createShader(bounds);
-                    },
-                    blendMode: BlendMode.dstIn,
-                    child: ShaderMask(
-                      shaderCallback: (Rect bounds) {
-                        return const LinearGradient(
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black,
-                            Colors.black,
-                            Colors.transparent,
-                          ],
-                          stops: [0.0, 0.05, 0.95, 1.0],
-                        ).createShader(bounds);
-                      },
-                      blendMode: BlendMode.dstIn,
-                      child: SafeNetworkImage(
-                        imageUrl: event.imageUrl,
-                        height: 340,
-                        width: double.infinity,
-                        fit: BoxFit.contain,
-                        alignment: Alignment.center,
-                      ),
-                    ),
-                  ),
+                  width: double.infinity,
+                  alignment: Alignment.topCenter,
                 ),
               ),
 
@@ -1473,7 +1422,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: SafeNetworkImage(
                               imageUrl: event.imageUrl,
                               fit: BoxFit.cover,
-                              alignment: Alignment.centerRight,
+                              alignment: Alignment.topRight,
                             ),
                           ),
 

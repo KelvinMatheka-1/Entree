@@ -156,7 +156,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     // Tap hero event card
-    await tester.tap(find.textContaining('AI Frontier Summit').first);
+    await tester.tap(find.textContaining('Urban Chameleon').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
@@ -242,10 +242,10 @@ void main() {
     expect(find.text('Sun'), findsOneWidget);
 
     // Verify event icon exists on calendar grid
-    expect(find.byIcon(Icons.smart_toy_rounded), findsWidgets);
+    expect(find.byIcon(Icons.palette_rounded), findsWidgets);
 
     // Tap on date 24 or on the event card to open EventDetailsScreen
-    await tester.tap(find.text('AI Frontier Summit: Global Tech Keynote').first);
+    await tester.tap(find.text('Urban Chameleon: Contemporary Street Art Expo').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
@@ -336,12 +336,12 @@ void main() {
 
     // Verify checked-in capsules and event names
     expect(
-        find.text('AI Frontier Summit: Global Tech Keynote'), findsOneWidget);
+        find.text('Urban Chameleon: Contemporary Street Art Expo'), findsOneWidget);
     expect(find.text('52/86 checked in'), findsOneWidget);
     expect(find.text('LIVE'), findsOneWidget);
 
     // Tap on the event card to open ScanEntryScreen
-    await tester.tap(find.text('AI Frontier Summit: Global Tech Keynote'));
+    await tester.tap(find.text('Urban Chameleon: Contemporary Street Art Expo'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 

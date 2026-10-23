@@ -7,12 +7,12 @@ class MockData {
   static final List<EventModel> events = [
     EventModel(
       id: 'evt-001',
-      name: 'AI Frontier Summit: Global Tech Keynote',
-      venue: 'Innovation Hub, Silicon Wharf',
-      venueAddress: '100 Tech Square, London',
-      collection: 'DEEP TECH & AI FORUM',
+      name: 'Urban Chameleon: Contemporary Street Art Expo',
+      venue: 'The Alchemist Yard, Westlands',
+      venueAddress: 'Parklands Road, Westlands, Nairobi',
+      collection: 'URBAN ART & VISUAL CULTURE',
       description:
-          'A flagship keynote on generative intelligence, autonomous agents, and next-gen computing architectures with global engineering leaders.',
+          'A curated live showcase and gallery exhibition exploring modern street art, calligraffiti, and vibrant wildlife symbolism by top urban visual artists.',
       date: DateTime(2026, 10, 24),
       startTime: '18:00',
       endTime: '22:00',
@@ -25,10 +25,9 @@ class MockData {
       status: EventStatus.live,
       isPaid: false,
       priceBadge: 'Free',
-      imageUrl:
-          'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=1000&fit=crop',
+      imageUrl: 'assets/images/urban_chameleon.jpg',
       attendeeAvatars: attendeeAvatars,
-      city: 'London',
+      city: 'Nairobi',
       isFeatured: true,
     ),
     EventModel(
@@ -59,16 +58,16 @@ class MockData {
     ),
     EventModel(
       id: 'evt-003',
-      name: 'Cloud & Distributed Systems Expo 2026',
-      venue: 'ExCeL Tech Pavilion',
-      venueAddress: '1 Western Gateway, London',
-      collection: 'CLOUD NATIVE ARCHITECTURE',
+      name: 'Naivas Foodmarket: 24-Hour Midnight Market & Social',
+      venue: 'Naivas Foodmarket, Westlands',
+      venueAddress: 'Ring Road Westlands, Nairobi',
+      collection: 'NIGHT MARKET & CULINARY SOCIAL',
       description:
-          'Technical deep dives, benchmark demonstrations, and networking on distributed databases, kubernetes, and edge computing.',
+          'A vibrant 24-hour late-night culinary market and drive-in social featuring artisanal street food, fresh harvest tastings, and midnight car meets.',
       date: DateTime(2026, 11, 1),
-      startTime: '11:00',
-      endTime: '15:00',
-      doorsOpenTime: '10:30',
+      startTime: '20:00',
+      endTime: '01:00',
+      doorsOpenTime: '19:30',
       tables: 6,
       seatsPerTable: 10,
       totalCapacity: 60,
@@ -77,10 +76,9 @@ class MockData {
       status: EventStatus.upcoming,
       isPaid: true,
       priceBadge: '\$ Paid',
-      imageUrl:
-          'https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=1000&fit=crop',
+      imageUrl: 'assets/images/naivas_foodmarket.jpg',
       attendeeAvatars: attendeeAvatars,
-      city: 'London',
+      city: 'Nairobi',
     ),
     EventModel(
       id: 'evt-004',

@@ -57,6 +57,12 @@ class LocalStorageService {
         final decoded = jsonDecode(eventsJson) as List<dynamic>;
         _cachedEvents.clear();
         _cachedEvents.addAll(decoded.map((e) => EventModel.fromJson(e as Map<String, dynamic>)));
+        final hasLegacy = _cachedEvents.any((e) =>
+            (e.id == 'evt-001' && e.name.contains('AI Frontier')) ||
+            (e.id == 'evt-003' && e.name.contains('Cloud')));
+        if (hasLegacy) {
+          _seedEvents(prefs);
+        }
       } catch (e) {
         debugPrint('[LOCAL_STORAGE] Corrupt events JSON, re-seeding: $e');
         _seedEvents(prefs);

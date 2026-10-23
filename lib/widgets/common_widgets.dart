@@ -553,16 +553,18 @@ class SafeNetworkImage extends StatelessWidget {
     this.height,
     this.borderRadius = BorderRadius.zero,
     this.fit = BoxFit.cover,
-    this.alignment = Alignment.center,
+    this.alignment = Alignment.topCenter,
   });
 
   // Fast mapping of known event image URLs to bundled high-speed local assets
   static String? _getFallbackAsset(String? url) {
-    if (url == null || url.isEmpty) return 'assets/images/event_keynote_stage.jpg';
+    if (url == null || url.isEmpty) return 'assets/images/urban_chameleon.jpg';
     if (url.startsWith('assets/')) return url;
-    if (url.contains('540575467063')) return 'assets/images/event_keynote_stage.jpg';
+    if (url.contains('urban_chameleon')) return 'assets/images/urban_chameleon.jpg';
+    if (url.contains('naivas_foodmarket')) return 'assets/images/naivas_foodmarket.jpg';
+    if (url.contains('540575467063')) return 'assets/images/urban_chameleon.jpg';
     if (url.contains('515187029135')) return 'assets/images/damascus_steel.jpg';
-    if (url.contains('505373877841')) return 'assets/images/professor_antikythera.jpg';
+    if (url.contains('505373877841')) return 'assets/images/naivas_foodmarket.jpg';
     if (url.contains('526374965328')) return 'assets/images/japanese_samurai.jpg';
     if (url.contains('1485827404703')) return 'assets/images/event_keynote_stage.jpg';
     return null;
