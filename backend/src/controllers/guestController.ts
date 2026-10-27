@@ -1,108 +1,35 @@
 import { Request, Response } from 'express';
-import { guestService } from '../services/guestService.js';
-import { eventService } from '../services/eventService.js';
+import { guestService as defaultGuestService, GuestService } from '../services/guestService.js';
+import { asyncHandler } from '../common/asyncHandler.js';
+import { ApiResponse } from '../common/apiResponse.js';
 
 export class GuestController {
-  public async listGuests(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const status = req.query.status as string | undefined;
-      const search = req.query.search as string | undefined;
+  constructor(private guestService: GuestService = defaultGuestService) {}
 
-      const guests = await guestService.listGuestsByEvent(eventId, {
-        status,
-        search,
-      });
+  public listGuests = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const status = req.query.status as string | undefined;
+    const search = req.query.search as string | undefined;
 
-      res.json({
-        success: true,
-        count: guests.length,
-        guests,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+    const guests = await this.guestService.listGuestsByEvent(eventId, {
+      status,
+      search,
+    });
 
-  public async addGuest(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const {
-        fullName,
-        email,
-        phone,
-        passId,
-        tableNumber,
-        tableName,
-        admission,
-        county,
-        constituency,
-        ward,
-        pollingCenter,
-      } = req.body;
+    ApiResponse.success(res, { guests }, { count: guests.length });
+  });
 
-      if (!fullName) {
-        res.status(400).json({
-          success: false,
-          message: 'Full name is required.',
-        });
-        return;
-      }
+  public addGuest = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const guest = await this.guestService.addGuest(eventId, req.body);
+    ApiResponse.created(res, { guest });
+  });
 
-      const event = await eventService.getEventById(eventId);
-      if (!event) {
-        res.status(404).json({
-          success: false,
-          message: 'Event not found',
-        });
-        return;
-      }
-
-      const guest = await guestService.addGuest(eventId, {
-        fullName,
-        email,
-        phone,
-        passId,
-        tableNumber,
-        tableName,
-        admission,
-        county,
-        constituency,
-        ward,
-        pollingCenter,
-      });
-
-      res.status(201).json({
-        success: true,
-        guest,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
-
-  public async getGuestStats(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const stats = await guestService.getEventGuestStats(eventId);
-
-      res.json({
-        success: true,
-        stats,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+  public getGuestStats = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const stats = await this.guestService.getEventGuestStats(eventId);
+    ApiResponse.success(res, { stats });
+  });
 }
 
 export const guestController = new GuestController();

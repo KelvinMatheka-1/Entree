@@ -1,53 +1,59 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import apiRouter from './routes/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { globalLimiter } from './middleware/rateLimiter.js';
+import { requestLogger } from './middleware/requestLogger.js';
+import { NotFoundError } from './errors/index.js';
 
 export function createApp(): express.Application {
   const app = express();
 
-  // Global middlewares
+  // Security HTTP headers
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    })
+  );
+
+  // Global rate limiter
+  app.use(globalLimiter);
+
+  // CORS headers
   app.use(
     cors({
       origin: '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
     })
   );
+
+  // Body parsers
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Basic request logging
-  app.use((req, res, next) => {
-    const start = Date.now();
-    res.on('finish', () => {
-      const duration = Date.now() - start;
-      console.log(`[${req.method}] ${req.originalUrl} - ${res.statusCode} (${duration}ms)`);
-    });
-    next();
-  });
+  // Structured HTTP request logging
+  app.use(requestLogger);
 
   // Health check endpoint
-  app.get('/health', (req, res) => {
+  app.get('/health', (_req, res) => {
     res.json({
       status: 'healthy',
       time: new Date().toISOString(),
-      service: 'Entrée MachineNova Event Backend',
+      service: 'Entree MachineNova Event Backend',
     });
   });
 
   // Mount API router
   app.use('/api/v1', apiRouter);
 
-  // 404 handler
-  app.use((req, res) => {
-    res.status(404).json({
-      success: false,
-      message: `Cannot ${req.method} ${req.path}`,
-    });
+  // 404 handler forwarded to central error handler
+  app.use((req, _res, next) => {
+    next(new NotFoundError(`Cannot ${req.method} ${req.path}`));
   });
 
-  // Central error handler
+  // Central operational error handler
   app.use(errorHandler);
 
   return app;

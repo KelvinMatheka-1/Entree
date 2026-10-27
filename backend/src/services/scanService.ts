@@ -1,13 +1,22 @@
-import { v4 as uuidv4 } from 'uuid';
-import { query } from '../db/database.js';
-import { machinenovaClient } from '../clients/machinenovaClient.js';
-import { guestService } from './guestService.js';
-import { eventService } from './eventService.js';
+import { eventRepository, EventRepository } from '../repositories/eventRepository.js';
+import { guestRepository, GuestRepository } from '../repositories/guestRepository.js';
+import { scanLogRepository, ScanLogRepository } from '../repositories/scanLogRepository.js';
+import { syncQueueRepository, SyncQueueRepository } from '../repositories/syncQueueRepository.js';
+import { machinenovaClient, MachineNovaClient } from '../clients/machinenovaClient.js';
 import { CheckInRequest, ScanVerificationResult, EntreeGuest } from '../types/guest.js';
+import { NotFoundError } from '../errors/index.js';
 
 export class ScanService {
+  constructor(
+    private eventRepo: EventRepository = eventRepository,
+    private guestRepo: GuestRepository = guestRepository,
+    private scanLogRepo: ScanLogRepository = scanLogRepository,
+    private queueRepo: SyncQueueRepository = syncQueueRepository,
+    private client: MachineNovaClient = machinenovaClient
+  ) {}
+
   public async verifyScan(eventId: string, passId: string): Promise<ScanVerificationResult> {
-    const event = await eventService.getEventById(eventId);
+    const event = await this.eventRepo.findByIdOrMachineNovaId(eventId);
     if (!event) {
       return {
         canCheckIn: false,
@@ -16,9 +25,9 @@ export class ScanService {
       };
     }
 
-    if (event.machinenovaEventId && machinenovaClient.isConfigured()) {
+    if (event.machinenovaEventId && this.client.isConfigured()) {
       try {
-        const mnResult = await machinenovaClient.scanForCheckin(event.machinenovaEventId, passId);
+        const mnResult = await this.client.scanForCheckin(event.machinenovaEventId, passId);
 
         if (mnResult.status === 'already_checked_in') {
           return {
@@ -71,7 +80,7 @@ export class ScanService {
       }
     }
 
-    const localGuest = await guestService.getGuestByPassId(event.id, passId);
+    const localGuest = await this.guestRepo.findByPassId(event.id, passId);
 
     if (localGuest) {
       if (localGuest.status === 'checkedIn') {
@@ -111,18 +120,18 @@ export class ScanService {
     guest: EntreeGuest;
     message: string;
   }> {
-    const event = await eventService.getEventById(request.eventId);
+    const event = await this.eventRepo.findByIdOrMachineNovaId(request.eventId);
     if (!event) {
-      throw new Error('Event not found');
+      throw new NotFoundError(`Event with id '${request.eventId}' not found`);
     }
 
-    let guest = await guestService.getGuestByPassId(request.eventId, request.passId);
+    let guest = await this.guestRepo.findByPassId(event.id, request.passId);
 
     const now = new Date();
     const timeFormatted = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
     if (!guest) {
-      guest = await guestService.addGuest(request.eventId, {
+      guest = await this.guestRepo.create(event.id, {
         passId: request.passId,
         fullName: request.fullName || `Attendee #${request.passId}`,
         tableNumber: request.tableNumber || '01',
@@ -133,6 +142,7 @@ export class ScanService {
         ward: request.ward,
         pollingCenter: request.pollingCenter,
       });
+      await this.eventRepo.incrementPassesIssued(event.id, 1);
     }
 
     if (guest.status === 'checkedIn') {
@@ -145,9 +155,9 @@ export class ScanService {
 
     let syncStatus = 'synced';
 
-    if (event.machinenovaEventId && machinenovaClient.isConfigured()) {
+    if (event.machinenovaEventId && this.client.isConfigured()) {
       try {
-        await machinenovaClient.checkin({
+        await this.client.checkin({
           event: event.machinenovaEventId,
           idNumber: request.passId,
           fullName: guest.fullName,
@@ -160,7 +170,7 @@ export class ScanService {
       } catch (err: any) {
         console.warn('[SCAN_SERVICE] Failed to push check-in upstream, queuing for sync:', err.message);
         syncStatus = 'pending_checkin';
-        await this.queueSyncAction('CHECKIN', {
+        await this.queueRepo.enqueue('CHECKIN', {
           machinenovaEventId: event.machinenovaEventId,
           passId: request.passId,
           fullName: guest.fullName,
@@ -170,38 +180,18 @@ export class ScanService {
       }
     }
 
-    await query(
-      `UPDATE guests SET
-        status = 'checkedIn',
-        check_in_time = $1,
-        sync_status = $2,
-        last_synced_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3`,
-      [timeFormatted, syncStatus, guest.id]
-    );
+    await this.guestRepo.updateCheckInStatus(guest.id, timeFormatted, syncStatus);
+    await this.eventRepo.incrementCheckedIn(event.id, 1);
 
-    await query(
-      `UPDATE events SET
-        checked_in = checked_in + 1,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1`,
-      [request.eventId]
-    );
+    await this.scanLogRepo.createLog({
+      eventId: event.id,
+      passId: request.passId,
+      status: 'CHECKED_IN',
+      operatorId: request.operatorId || 'default-operator',
+      details: `Checked in at ${timeFormatted}`,
+    });
 
-    await query(
-      `INSERT INTO scan_logs (id, event_id, pass_id, status, operator_id, details)
-       VALUES ($1, $2, $3, 'CHECKED_IN', $4, $5)`,
-      [
-        uuidv4(),
-        request.eventId,
-        request.passId,
-        request.operatorId || 'default-operator',
-        `Checked in at ${timeFormatted}`,
-      ]
-    );
-
-    const updatedGuest = (await guestService.getGuestByPassId(request.eventId, request.passId))!;
+    const updatedGuest = (await this.guestRepo.findByPassId(event.id, request.passId))!;
 
     return {
       success: true,
@@ -211,43 +201,27 @@ export class ScanService {
   }
 
   public async undoCheckIn(eventId: string, passId: string): Promise<boolean> {
-    const guest = await guestService.getGuestByPassId(eventId, passId);
+    const event = await this.eventRepo.findByIdOrMachineNovaId(eventId);
+    if (!event) {
+      throw new NotFoundError(`Event with id '${eventId}' not found`);
+    }
+
+    const guest = await this.guestRepo.findByPassId(event.id, passId);
     if (!guest || guest.status !== 'checkedIn') {
       return false;
     }
 
-    await query(
-      `UPDATE guests SET
-        status = 'notArrived',
-        check_in_time = NULL,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1`,
-      [guest.id]
-    );
+    await this.guestRepo.updateCheckInStatus(guest.id, null, 'synced');
+    await this.eventRepo.decrementCheckedIn(event.id, 1);
 
-    await query(
-      `UPDATE events SET
-        checked_in = GREATEST(0, checked_in - 1),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1`,
-      [eventId]
-    );
-
-    await query(
-      `INSERT INTO scan_logs (id, event_id, pass_id, status, details)
-       VALUES ($1, $2, $3, 'CHECKIN_CANCELLED', 'Check-in reverted')`,
-      [uuidv4(), eventId, passId]
-    );
+    await this.scanLogRepo.createLog({
+      eventId: event.id,
+      passId,
+      status: 'CHECKIN_CANCELLED',
+      details: 'Check-in reverted',
+    });
 
     return true;
-  }
-
-  private async queueSyncAction(action: string, payload: any): Promise<void> {
-    await query(
-      `INSERT INTO sync_queue (id, action, payload, status)
-       VALUES ($1, $2, $3, 'pending')`,
-      [uuidv4(), action, payload]
-    );
   }
 }
 

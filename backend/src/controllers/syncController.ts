@@ -1,39 +1,31 @@
 import { Request, Response } from 'express';
-import { syncService } from '../services/syncService.js';
-import { machinenovaClient } from '../clients/machinenovaClient.js';
+import { syncService as defaultSyncService, SyncService } from '../services/syncService.js';
+import { machinenovaClient, MachineNovaClient } from '../clients/machinenovaClient.js';
+import { asyncHandler } from '../common/asyncHandler.js';
+import { ApiResponse } from '../common/apiResponse.js';
 
 export class SyncController {
-  public async getStatus(req: Request, res: Response): Promise<void> {
-    try {
-      const queueStatus = await syncService.getQueueStatus();
-      res.json({
-        success: true,
-        upstreamConfigured: machinenovaClient.isConfigured(),
-        queue: queueStatus,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+  constructor(
+    private syncService: SyncService = defaultSyncService,
+    private client: MachineNovaClient = machinenovaClient
+  ) {}
 
-  public async triggerSync(req: Request, res: Response): Promise<void> {
-    try {
-      const result = await syncService.processQueue();
-      res.json({
-        success: true,
-        message: 'Sync process completed',
-        result,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+  public getStatus = asyncHandler(async (req: Request, res: Response) => {
+    const queueStatus = await this.syncService.getQueueStatus();
+    ApiResponse.success(res, {
+      upstreamConfigured: this.client.isConfigured(),
+      queue: queueStatus,
+    });
+  });
+
+  public triggerSync = asyncHandler(async (req: Request, res: Response) => {
+    const result = await this.syncService.processQueue();
+    ApiResponse.success(
+      res,
+      { result },
+      { message: 'Sync process completed' }
+    );
+  });
 }
 
 export const syncController = new SyncController();

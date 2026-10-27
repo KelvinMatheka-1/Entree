@@ -1,111 +1,64 @@
 import { Request, Response } from 'express';
-import { scanService } from '../services/scanService.js';
+import { scanService as defaultScanService, ScanService } from '../services/scanService.js';
+import { asyncHandler } from '../common/asyncHandler.js';
+import { ApiResponse } from '../common/apiResponse.js';
+import { BadRequestError } from '../errors/index.js';
 
 export class ScanController {
-  public async verifyScan(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const passId = (req.query.passId as string) || (req.query.id_number as string);
+  constructor(private scanService: ScanService = defaultScanService) {}
 
-      if (!passId) {
-        res.status(400).json({
-          success: false,
-          message: 'passId (or id_number) query parameter is required',
-        });
-        return;
-      }
+  public verifyScan = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const passId = (req.query.passId as string) || (req.query.id_number as string);
 
-      const result = await scanService.verifyScan(eventId, passId.trim());
-
-      res.json({
-        success: true,
-        verification: result,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+    if (!passId) {
+      throw new BadRequestError('passId (or id_number) query parameter is required');
     }
-  }
 
-  public async checkIn(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const {
-        passId,
-        operatorId,
-        fullName,
-        phone,
-        tableNumber,
-        tableName,
-        county,
-        constituency,
-        ward,
-        pollingCenter,
-      } = req.body;
+    const result = await this.scanService.verifyScan(eventId, passId.trim());
+    ApiResponse.success(res, { verification: result });
+  });
 
-      if (!passId) {
-        res.status(400).json({
-          success: false,
-          message: 'passId is required to execute check-in',
-        });
-        return;
-      }
+  public checkIn = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const passId = req.body.passId;
 
-      const result = await scanService.checkIn({
-        eventId,
-        passId: passId.trim(),
-        operatorId,
-        fullName,
-        phone,
-        tableNumber,
-        tableName,
-        county,
-        constituency,
-        ward,
-        pollingCenter,
-      });
+    if (!passId) {
+      throw new BadRequestError('passId is required to execute check-in');
+    }
 
-      res.json({
+    const result = await this.scanService.checkIn({
+      ...req.body,
+      eventId,
+      passId: passId.trim(),
+    });
+
+    ApiResponse.success(
+      res,
+      {
         success: result.success,
-        message: result.message,
         guest: result.guest,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+      },
+      { message: result.message }
+    );
+  });
+
+  public undoCheckIn = asyncHandler(async (req: Request, res: Response) => {
+    const eventId = String(req.params.eventId);
+    const passId = req.body.passId;
+
+    if (!passId) {
+      throw new BadRequestError('passId is required to undo check-in');
     }
-  }
 
-  public async undoCheckIn(req: Request, res: Response): Promise<void> {
-    try {
-      const eventId = String(req.params.eventId);
-      const { passId } = req.body;
+    const success = await this.scanService.undoCheckIn(eventId, passId.trim());
 
-      if (!passId) {
-        res.status(400).json({
-          success: false,
-          message: 'passId is required to undo check-in',
-        });
-        return;
-      }
-
-      const success = await scanService.undoCheckIn(eventId, passId.trim());
-
-      res.json({
-        success,
-        message: success ? 'Check-in reverted successfully' : 'Could not revert check-in',
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+    ApiResponse.success(
+      res,
+      {},
+      { message: success ? 'Check-in reverted successfully' : 'Could not revert check-in' }
+    );
+  });
 }
 
 export const scanController = new ScanController();

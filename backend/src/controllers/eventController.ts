@@ -1,220 +1,102 @@
 import { Request, Response } from 'express';
-import { eventService } from '../services/eventService.js';
-import { guestService } from '../services/guestService.js';
-import { machinenovaClient } from '../clients/machinenovaClient.js';
+import { eventService as defaultEventService, EventService } from '../services/eventService.js';
+import { guestService as defaultGuestService, GuestService } from '../services/guestService.js';
+import { machinenovaClient, MachineNovaClient } from '../clients/machinenovaClient.js';
+import { asyncHandler } from '../common/asyncHandler.js';
+import { ApiResponse } from '../common/apiResponse.js';
+import { NotFoundError } from '../errors/index.js';
 
 export class EventController {
-  public async listEvents(req: Request, res: Response): Promise<void> {
-    try {
-      const status = req.query.status as string | undefined;
-      const search = req.query.search as string | undefined;
-      const refresh = req.query.refresh === 'true';
+  constructor(
+    private eventService: EventService = defaultEventService,
+    private guestService: GuestService = defaultGuestService,
+    private client: MachineNovaClient = machinenovaClient
+  ) {}
 
-      const events = await eventService.listEvents({
-        status,
-        search,
-        refreshFromMachineNova: refresh,
-      });
+  public listEvents = asyncHandler(async (req: Request, res: Response) => {
+    const status = req.query.status as string | undefined;
+    const search = req.query.search as string | undefined;
+    const refresh = req.query.refresh === 'true';
 
-      res.json({
-        success: true,
-        count: events.length,
-        events,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+    const events = await this.eventService.listEvents({
+      status,
+      search,
+      refreshFromMachineNova: refresh,
+    });
+
+    ApiResponse.success(res, { events }, { count: events.length });
+  });
+
+  public getEventById = asyncHandler(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const event = await this.eventService.getEventById(id);
+
+    if (!event) {
+      throw new NotFoundError(`Event with id '${id}' not found`);
     }
-  }
 
-  public async getEventById(req: Request, res: Response): Promise<void> {
-    try {
-      const id = String(req.params.id);
-      const event = await eventService.getEventById(id);
+    ApiResponse.success(res, { event });
+  });
 
-      if (!event) {
-        res.status(404).json({
-          success: false,
-          message: 'Event not found',
-        });
-        return;
-      }
+  public createEvent = asyncHandler(async (req: Request, res: Response) => {
+    const created = await this.eventService.createEvent(req.body);
+    ApiResponse.created(res, { event: created });
+  });
 
-      res.json({
-        success: true,
-        event,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+  public updateEvent = asyncHandler(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const updated = await this.eventService.updateEvent(id, req.body);
+
+    if (!updated) {
+      throw new NotFoundError(`Event with id '${id}' not found`);
     }
-  }
 
-  public async createEvent(req: Request, res: Response): Promise<void> {
-    try {
-      const {
-        name,
-        venue,
-        venueAddress,
-        collection,
-        description,
-        date,
-        startTime,
-        endTime,
-        doorsOpenTime,
-        tables,
-        seatsPerTable,
-        totalCapacity,
-        passesIssued,
-        status,
-        imageUrl,
-        isPaid,
-        priceBadge,
-        city,
-        restrictToJurisdiction,
-        restrictToRoster,
-        geoNode,
-      } = req.body;
+    ApiResponse.success(res, { event: updated });
+  });
 
-      if (!name || !date) {
-        res.status(400).json({
-          success: false,
-          message: 'Event name and date are required.',
-        });
-        return;
-      }
+  public deleteEvent = asyncHandler(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const success = await this.eventService.deleteEvent(id);
 
-      const created = await eventService.createEvent({
-        name,
-        venue,
-        venueAddress,
-        collection,
-        description,
-        date,
-        startTime,
-        endTime,
-        doorsOpenTime,
-        tables,
-        seatsPerTable,
-        totalCapacity,
-        passesIssued,
-        status,
-        imageUrl,
-        isPaid,
-        priceBadge,
-        city,
-        restrictToJurisdiction,
-        restrictToRoster,
-        geoNode,
-      });
-
-      res.status(201).json({
-        success: true,
-        event: created,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+    if (!success) {
+      throw new NotFoundError(`Event with id '${id}' not found or already deleted`);
     }
-  }
 
-  public async updateEvent(req: Request, res: Response): Promise<void> {
-    try {
-      const id = String(req.params.id);
-      const updated = await eventService.updateEvent(id, req.body);
+    ApiResponse.success(res, {}, { message: 'Event deleted successfully' });
+  });
 
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Event not found',
-        });
-        return;
-      }
-
-      res.json({
-        success: true,
-        event: updated,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
+  public getEventStats = asyncHandler(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const event = await this.eventService.getEventById(id);
+    if (!event) {
+      throw new NotFoundError(`Event with id '${id}' not found`);
     }
-  }
 
-  public async deleteEvent(req: Request, res: Response): Promise<void> {
-    try {
-      const id = String(req.params.id);
-      const success = await eventService.deleteEvent(id);
+    const localStats = await this.guestService.getEventGuestStats(event.id);
 
-      if (!success) {
-        res.status(404).json({
-          success: false,
-          message: 'Event not found or already deleted',
-        });
-        return;
+    let upstreamStats: any = null;
+    if (event.machinenovaEventId && this.client.isConfigured()) {
+      try {
+        upstreamStats = await this.client.getEventStatistics(event.machinenovaEventId);
+      } catch (e: any) {
+        console.warn('[EVENT_CONTROLLER] MachineNova event stats call failed:', e.message);
       }
-
-      res.json({
-        success: true,
-        message: 'Event deleted successfully',
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
     }
-  }
 
-  public async getEventStats(req: Request, res: Response): Promise<void> {
-    try {
-      const id = String(req.params.id);
-      const event = await eventService.getEventById(id);
-      if (!event) {
-        res.status(404).json({ success: false, message: 'Event not found' });
-        return;
-      }
-
-      const localStats = await guestService.getEventGuestStats(event.id);
-
-      let upstreamStats: any = null;
-      if (event.machinenovaEventId && machinenovaClient.isConfigured()) {
-        try {
-          upstreamStats = await machinenovaClient.getEventStatistics(event.machinenovaEventId);
-        } catch (e: any) {
-          console.warn('MachineNova event stats call failed:', e.message);
-        }
-      }
-
-      res.json({
-        success: true,
-        event: {
-          id: event.id,
-          name: event.name,
-          passesIssued: event.passesIssued,
-          checkedIn: event.checkedIn,
-          totalCapacity: event.totalCapacity,
-        },
-        stats: {
-          ...localStats,
-          upstream: upstreamStats,
-        },
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-  }
+    ApiResponse.success(res, {
+      event: {
+        id: event.id,
+        name: event.name,
+        passesIssued: event.passesIssued,
+        checkedIn: event.checkedIn,
+        totalCapacity: event.totalCapacity,
+      },
+      stats: {
+        ...localStats,
+        upstream: upstreamStats,
+      },
+    });
+  });
 }
 
 export const eventController = new EventController();

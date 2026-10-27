@@ -6,6 +6,17 @@ export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   host: process.env.HOST || '0.0.0.0',
   nodeEnv: process.env.NODE_ENV || 'development',
+  corsOrigin: process.env.CORS_ORIGIN || '*',
+
+  // Security & Authentication Settings
+  security: {
+    jwtSecret: process.env.JWT_SECRET || 'entree-machinenova-jwt-secret-key-32charsmin',
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    apiKey: process.env.ENTREE_API_KEY || 'entree-api-key-default-dev',
+    allowAnonymousDev: process.env.ALLOW_ANONYMOUS_DEV !== 'false',
+    rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 mins
+    rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '600', 10), // 600 requests per window
+  },
 
   // PostgreSQL Configuration
   database: {

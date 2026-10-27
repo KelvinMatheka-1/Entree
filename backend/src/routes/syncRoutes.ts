@@ -1,9 +1,21 @@
 import { Router } from 'express';
 import { syncController } from '../controllers/syncController.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/status', (req, res) => syncController.getStatus(req, res));
-router.post('/trigger', (req, res) => syncController.triggerSync(req, res));
+router.get(
+  '/status',
+  authenticate,
+  requirePermission('sync:read'),
+  syncController.getStatus
+);
+
+router.post(
+  '/trigger',
+  authenticate,
+  requirePermission('sync:trigger'),
+  syncController.triggerSync
+);
 
 export default router;
